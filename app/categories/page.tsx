@@ -1,15 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Card, Table, Progress, Spin } from 'antd';
+import { Card, Table, Progress, Spin, Tag } from 'antd';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { CATEGORY_LABELS, type RepoCategory } from '@/lib/types';
 import { fetchCategoryStats, type CategoryStat } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import NotConfigured from '@/components/NotConfigured';
-
-function label(cat: string): string {
-  return CATEGORY_LABELS[cat as RepoCategory] ?? cat;
-}
 
 export default function CategoriesPage() {
   const [rows, setRows] = useState<CategoryStat[]>([]);
@@ -29,7 +24,7 @@ export default function CategoriesPage() {
   if (!isSupabaseConfigured()) return <NotConfigured />;
 
   const chartData = rows.map((r) => ({
-    name: label(r.category),
+    name: r.category_name || r.category,
     数量: r.total,
     均分: Number((r.avg_priority ?? 0).toFixed(1)),
   }));
@@ -56,7 +51,14 @@ export default function CategoriesPage() {
           dataSource={rows}
           pagination={false}
           columns={[
-            { title: '分类', dataIndex: 'category', render: (v) => label(v) },
+            {
+              title: '分类',
+              dataIndex: 'category_name',
+              render: (name: string, r) => (
+                <Tag color="blue">{name || r.category}</Tag>
+              ),
+            },
+            { title: 'Slug', dataIndex: 'category', render: (v) => <code>{v}</code> },
             { title: '项目数', dataIndex: 'total', sorter: (a, b) => a.total - b.total },
             {
               title: '平均优先级',

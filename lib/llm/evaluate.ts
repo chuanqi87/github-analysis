@@ -7,6 +7,7 @@ import { llmLimiter, withRetry } from '@/lib/ratelimit/limiter';
 import { stableHash } from '@/lib/hash';
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { AnalyzeRepo, LlmOutput } from '@/lib/llm/classify';
+import type { CategoryTreeNode } from '@/lib/types';
 
 function signalFingerprint(sig: CollectedSignals) {
   return {
@@ -41,6 +42,7 @@ export async function evaluateRepo(
   repo: AnalyzeRepo,
   sig: CollectedSignals,
   readme: string | null,
+  categoryTree: CategoryTreeNode[],
 ): Promise<LlmOutput<EvaluateResult>> {
   const result = await withRetry(
     () =>
@@ -50,7 +52,7 @@ export async function evaluateRepo(
           schema: evaluateSchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(2),
+          system: systemPrompt(2, categoryTree),
           prompt: buildUserPrompt(repo, sig, readme),
           maxRetries: 1,
         }),

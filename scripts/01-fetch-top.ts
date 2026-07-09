@@ -21,6 +21,8 @@ function toRow(r: SearchRepo) {
     license: r.license,
     pushed_at: r.pushed_at,
     repo_created_at: r.repo_created_at,
+    is_archived: r.archived,
+    archived_reason: r.archived ? 'github_archived' : null,
   };
 }
 
@@ -32,9 +34,10 @@ export async function runFetchTop(opts: StageOpts = {}): Promise<void> {
       ? await fetchTopN(opts.limit)
       : await enumerateTopRepos(10000, (m) => log(m));
     log(`共 ${repos.length} 个仓库,写入 repositories...`);
+    const archivedCount = repos.filter((r) => r.archived).length;
     await upsertBatched('repositories', repos.map(toRow), { onConflict: 'id' });
-    await finishRun(runId, 'success', { count: repos.length });
-    log(`fetch-top 完成:${repos.length} 条`);
+    await finishRun(runId, 'success', { count: repos.length, archived: archivedCount });
+    log(`fetch-top 完成:${repos.length} 条(其中 ${archivedCount} 个已归档)`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

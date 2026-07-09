@@ -43,9 +43,14 @@ create table if not exists repositories (
   repo_created_at   timestamptz,
   readme_text       text,                          -- 仅候选填充(截断)
   readme_fetched_at timestamptz,
+  is_archived       boolean not null default false,
+  archived_reason   text,                          -- github_archived | readme_archived | null
   first_seen_at     timestamptz not null default now(),
   updated_at        timestamptz not null default now()
 );
+-- 补列(幂等):对已存在的表添加新列
+alter table repositories add column if not exists is_archived boolean not null default false;
+alter table repositories add column if not exists archived_reason text;
 create index if not exists idx_repositories_stars on repositories (stars desc);
 create index if not exists idx_repositories_language on repositories (primary_language);
 drop trigger if exists trg_repositories_updated on repositories;

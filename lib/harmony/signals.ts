@@ -3,6 +3,7 @@ import type { HarmonyState } from '@/lib/types';
 import { keywordHits, keywordScore } from '@/lib/harmony/keywords';
 import { findOhpmPackage } from '@/lib/harmony/ohpm';
 import { matchRegistry, type RegistryIndex } from '@/lib/harmony/registry';
+import { searchGitCodeWithKnown, type GitCodeResult } from '@/lib/harmony/gitcode';
 
 export interface SignalRepo {
   full_name: string;
@@ -36,6 +37,10 @@ export interface CollectedSignals {
   keyword_score: number;
   auto_state_hint: HarmonyState;
   signals: Record<string, unknown>;
+  // GitCode 搜索结果
+  gitcode_matched: boolean;
+  gitcode_repo_url: string | null;
+  gitcode_repo_name: string | null;
 }
 
 function decideHint(s: {
@@ -44,8 +49,10 @@ function decideHint(s: {
   registry: boolean;
   ets: boolean;
   kw: number;
+  gitcode: boolean;
 }): { state: HarmonyState; suspected: boolean } {
   if (s.ohpm) return { state: 'ADAPTED', suspected: false };
+  if (s.gitcode) return { state: 'ADAPTED', suspected: true }; // GitCode 找到适配仓
   if (s.project) return { state: 'PARTIAL', suspected: false };
   if (s.registry) return { state: 'PARTIAL', suspected: false };
   if (s.ets || s.kw >= 0.5) return { state: 'NOT_ADAPTED', suspected: true };
@@ -57,7 +64,7 @@ export async function collectHarmonySignals(
   files: HarmonyFileFlags,
   registry: RegistryIndex,
   readmeText?: string | null,
-  opts: { checkOhpm?: boolean } = {},
+  opts: { checkOhpm?: boolean; checkGitCode?: boolean } = {},
 ): Promise<CollectedSignals> {
   const hasOhPackage = files.has_oh_package;
   const hasBuildProfile = files.has_build_profile;
@@ -88,12 +95,30 @@ export async function collectHarmonySignals(
     }
   }
 
+  // GitCode 搜索:查找是否有鸿蒙适配版本
+  let gitcodeMatched = false;
+  let gitcodeRepoUrl: string | null = null;
+  let gitcodeRepoName: string | null = null;
+  
+  const shouldGitCode = opts.checkGitCode ?? true;
+  if (shouldGitCode) {
+    try {
+      const gitResult = await searchGitCodeWithKnown(repo.full_name, repo.name);
+      gitcodeMatched = gitResult.matched;
+      gitcodeRepoUrl = gitResult.repo_url;
+      gitcodeRepoName = gitResult.repo_name;
+    } catch {
+      // GitCode 搜索失败不影响整体流程
+    }
+  }
+
   const hint = decideHint({
     ohpm: ohpmMatched,
     project,
     registry: reg.hit,
     ets: hasEts,
     kw: kwScore,
+    gitcode: gitcodeMatched,
   });
 
   return {
@@ -115,6 +140,10 @@ export async function collectHarmonySignals(
       keyword_hits: kwList,
       registry_match: reg,
       probed_ohpm: shouldOhpm,
+      gitcode_searched: shouldGitCode,
     },
+    gitcode_matched: gitcodeMatched,
+    gitcode_repo_url: gitcodeRepoUrl,
+    gitcode_repo_name: gitcodeRepoName,
   };
 }

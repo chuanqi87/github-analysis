@@ -1,7 +1,7 @@
 // 管道编排器:pnpm pipeline --stage=<stage> [--limit=N] [--ids=1,2] [--force]
 //
 // stages: fetch-top | enrich | harmony-signals | fetch-readme | llm-classify
-//         | llm-evaluate | score | daily-trending | build-registry | all
+//         | llm-evaluate | score | daily-trending | build-registry | mark-archived | all
 import 'dotenv/config';
 import { parseArgs, log, type StageOpts } from '@/scripts/_common';
 import { runFetchTop } from '@/scripts/01-fetch-top';
@@ -11,6 +11,7 @@ import { runFetchReadme } from '@/scripts/04-fetch-readme';
 import { runLlmClassify } from '@/scripts/05-llm-classify';
 import { runLlmEvaluate } from '@/scripts/06-llm-evaluate';
 import { runScore } from '@/scripts/07-score';
+import { runMarkArchived } from '@/scripts/08-mark-archived';
 import { runDailyTrending } from '@/scripts/daily-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
 
@@ -24,6 +25,7 @@ const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   score: runScore,
   'daily-trending': runDailyTrending,
   'build-registry': () => runBuildRegistry(),
+  'mark-archived': runMarkArchived,
 };
 
 const FULL_ORDER = [
@@ -32,6 +34,7 @@ const FULL_ORDER = [
   'build-registry',
   'harmony-signals',
   'fetch-readme',
+  'mark-archived',   // 在 LLM 分析之前标记归档,避免浪费 token
   'llm-classify',
   'llm-evaluate',
   'score',

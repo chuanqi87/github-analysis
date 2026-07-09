@@ -16,6 +16,7 @@ export interface SearchRepo {
   pushed_at: string | null;
   repo_created_at: string | null;
   homepage: string | null;
+  archived: boolean;
 }
 
 interface RawItem {
@@ -33,6 +34,7 @@ interface RawItem {
   pushed_at: string | null;
   created_at: string | null;
   homepage: string | null;
+  archived: boolean;
 }
 
 function mapItem(it: RawItem): SearchRepo {
@@ -51,6 +53,7 @@ function mapItem(it: RawItem): SearchRepo {
     pushed_at: it.pushed_at,
     repo_created_at: it.created_at,
     homepage: it.homepage || null,
+    archived: it.archived ?? false,
   };
 }
 

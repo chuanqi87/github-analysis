@@ -6,6 +6,7 @@ import { systemPrompt, buildUserPrompt, PROMPT_VERSION } from '@/lib/llm/prompts
 import { llmLimiter, withRetry } from '@/lib/ratelimit/limiter';
 import { stableHash } from '@/lib/hash';
 import type { CollectedSignals } from '@/lib/harmony/signals';
+import type { CategoryTreeNode } from '@/lib/types';
 
 export interface AnalyzeRepo {
   full_name: string;
@@ -52,6 +53,7 @@ export function classifyInputHash(repo: AnalyzeRepo, sig: CollectedSignals): str
 export async function classifyRepo(
   repo: AnalyzeRepo,
   sig: CollectedSignals,
+  categoryTree: CategoryTreeNode[],
 ): Promise<LlmOutput<ClassifyResult>> {
   const result = await withRetry(
     () =>
@@ -61,7 +63,7 @@ export async function classifyRepo(
           schema: classifySchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(1),
+          system: systemPrompt(1, categoryTree),
           prompt: buildUserPrompt(repo, sig),
           maxRetries: 1,
         }),

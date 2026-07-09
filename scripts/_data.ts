@@ -15,19 +15,26 @@ export interface StageRepo {
   stars: number;
   license: string | null;
   readme_text: string | null;
+  is_archived: boolean;
+  archived_reason: string | null;
 }
 
 export async function loadStageRepos(opts: StageOpts): Promise<StageRepo[]> {
   const client = getAdminClient();
   let q = client
     .from('repositories')
-    .select('id, full_name, owner, name, description, primary_language, topics, stars, license, readme_text')
+    .select('id, full_name, owner, name, description, primary_language, topics, stars, license, readme_text, is_archived, archived_reason')
     .order('stars', { ascending: false });
   if (opts.ids?.length) q = q.in('id', opts.ids);
   if (opts.limit) q = q.limit(opts.limit);
   const { data, error } = await q;
   if (error) throw new Error(`加载 repositories 失败:${error.message}`);
-  return (data ?? []).map((r) => ({ ...(r as StageRepo), topics: (r as StageRepo).topics ?? [] }));
+  return (data ?? []).map((r) => ({
+    ...(r as StageRepo),
+    topics: (r as StageRepo).topics ?? [],
+    is_archived: (r as any).is_archived ?? false,
+    archived_reason: (r as any).archived_reason ?? null,
+  }));
 }
 
 interface SignalRow {
@@ -45,6 +52,9 @@ interface SignalRow {
   source_repo_url: string | null;
   keyword_score: number;
   auto_state_hint: HarmonyState | null;
+  gitcode_matched: boolean;
+  gitcode_repo_url: string | null;
+  gitcode_repo_name: string | null;
 }
 
 export async function loadSignalsMap(ids: number[]): Promise<Map<number, CollectedSignals>> {
@@ -55,7 +65,7 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
     const { data, error } = await client
       .from('harmony_signals')
       .select(
-        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint',
+        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint, gitcode_matched, gitcode_repo_url, gitcode_repo_name',
       )
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 harmony_signals 失败:${error.message}`);
@@ -75,6 +85,9 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
         keyword_score: r.keyword_score,
         auto_state_hint: r.auto_state_hint ?? 'NOT_ADAPTED',
         signals: {},
+        gitcode_matched: r.gitcode_matched ?? false,
+        gitcode_repo_url: r.gitcode_repo_url ?? null,
+        gitcode_repo_name: r.gitcode_repo_name ?? null,
       });
     }
   }
@@ -96,6 +109,9 @@ const EMPTY_SIGNALS: CollectedSignals = {
   keyword_score: 0,
   auto_state_hint: 'NOT_ADAPTED',
   signals: {},
+  gitcode_matched: false,
+  gitcode_repo_url: null,
+  gitcode_repo_name: null,
 };
 
 export function signalsFor(map: Map<number, CollectedSignals>, id: number): CollectedSignals {

@@ -2,10 +2,12 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
+  Alert,
   Card,
   Descriptions,
   Space,
   Tag,
+  Tooltip,
   Typography,
   List,
   Row,
@@ -15,7 +17,7 @@ import {
   Progress,
   Divider,
 } from 'antd';
-import { CATEGORY_LABELS } from '@/lib/types';
+import { ARCHIVED_REASON_LABELS, type ArchivedReason } from '@/lib/types';
 import { fetchRepoByFullName, type BoardRow } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
@@ -58,9 +60,22 @@ function RepoDetail() {
   if (!row) return <Empty description={`未找到项目 ${full ?? ''}`} />;
 
   const b = row.breakdown;
+  const archivedReason = row.archived_reason
+    ? ARCHIVED_REASON_LABELS[row.archived_reason as ArchivedReason]
+    : '已归档';
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {row.is_archived && (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<span>📦</span>}
+          message={`该项目已被归档 (${archivedReason}),无需进行适配分析`}
+          banner
+        />
+      )}
+
       <Card>
         <Space direction="vertical" size={4} style={{ width: '100%' }}>
           <Space align="center" wrap>
@@ -70,7 +85,12 @@ function RepoDetail() {
               </a>
             </Typography.Title>
             <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
-            {row.category && <Tag color="blue">{CATEGORY_LABELS[row.category]}</Tag>}
+            {row.is_archived && (
+              <Tooltip title={archivedReason}>
+                <Tag color="default">📦 已归档</Tag>
+              </Tooltip>
+            )}
+            {row.category && <Tag color="blue">{row.category_name || row.category}</Tag>}
           </Space>
           <Typography.Text type="secondary">{row.description}</Typography.Text>
           <Space wrap>
@@ -190,15 +210,19 @@ function RepoDetail() {
             )}
           </Space>
         ) : (
-          <Empty description="暂无 LLM 分析(等待分析阶段)" />
+          <Empty description={row.is_archived ? '已归档,无需 LLM 分析' : '暂无 LLM 分析(等待分析阶段)'} />
         )}
       </Card>
 
       {/* Tier-3 代码深度分析 */}
-      <Divider orientation="left" style={{ margin: '8px 0' }}>
-        Agent 深度分析
-      </Divider>
-      <Tier3Analysis repositoryId={row.id} />
+      {!row.is_archived && (
+        <>
+          <Divider orientation="left" style={{ margin: '8px 0' }}>
+            Agent 深度分析
+          </Divider>
+          <Tier3Analysis repositoryId={row.id} />
+        </>
+      )}
     </Space>
   );
 }

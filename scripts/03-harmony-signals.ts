@@ -1,4 +1,4 @@
-// 阶段3:采集鸿蒙化辅助信号(ohpm / 底表 / 关键词),写 harmony_signals + auto_state_hint。
+// 阶段3:采集鸿蒙化辅助信号(ohpm / 底表 / 关键词 / GitCode),写 harmony_signals + auto_state_hint。
 import 'dotenv/config';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { loadRegistry } from '@/lib/harmony/registry';
@@ -63,9 +63,10 @@ export async function runHarmonySignals(opts: StageOpts = {}): Promise<void> {
 
     const repos = await loadRepos(opts);
     const flags = await loadFileFlags(repos.map((r) => r.id));
-    log(`采集 ${repos.length} 个仓库的鸿蒙信号...`);
+    log(`采集 ${repos.length} 个仓库的鸿蒙信号(含 GitCode 搜索)...`);
 
     let done = 0;
+    let gitcodeHits = 0;
     const rows = await pMap(
       repos,
       async (repo) => {
@@ -77,15 +78,24 @@ export async function runHarmonySignals(opts: StageOpts = {}): Promise<void> {
           repo.readme_text,
         );
         done++;
-        if (done % 200 === 0) log(`  信号进度 ${done}/${repos.length}`);
-        return { repository_id: repo.id, ...sig, checked_at: new Date().toISOString() };
+        if (sig.gitcode_matched) gitcodeHits++;
+        if (done % 20 === 0) log(`  信号进度 ${done}/${repos.length} (GitCode命中:${gitcodeHits})`);
+        return {
+          repository_id: repo.id,
+          ...sig,
+          checked_at: new Date().toISOString(),
+          // 写入 GitCode 新字段
+          gitcode_matched: sig.gitcode_matched,
+          gitcode_repo_url: sig.gitcode_repo_url,
+          gitcode_repo_name: sig.gitcode_repo_name,
+        };
       },
-      8,
+      4, // 降低并发避免 GitCode 限流
     );
 
     await upsertBatched('harmony_signals', rows, { onConflict: 'repository_id' });
-    await finishRun(runId, 'success', { count: rows.length });
-    log(`harmony-signals 完成:${rows.length} 条`);
+    await finishRun(runId, 'success', { count: rows.length, gitcode_hits: gitcodeHits });
+    log(`harmony-signals 完成:${rows.length} 条 (GitCode命中:${gitcodeHits})`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

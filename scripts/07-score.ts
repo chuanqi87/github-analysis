@@ -1,13 +1,15 @@
 // 阶段7:合并人工标记(权威)与信号/分析,计算适配优先级并排名。
+// 已归档仓库不参与排名计算。
+// v3: 支持动态分类,通过 repo_board 视图获取分类 slug。
 import 'dotenv/config';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { computePriority, WEIGHTS_VERSION } from '@/lib/scoring/priority';
-import type { HarmonyState, RepoCategory } from '@/lib/types';
+import type { HarmonyState } from '@/lib/types';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, type StageOpts } from '@/scripts/_common';
 
 interface BestAnalysis {
-  category: RepoCategory | null;
+  category: string | null;          // slug(从视图 join)
   mobile_relevance: number | null;
   feasibility: number | null;
   effort_estimate: number | null;
@@ -29,30 +31,36 @@ async function pageAll<T>(
   return out;
 }
 
+/**
+ * 从 repo_board 视图获取每个仓库的最佳分析结果。
+ * 视图已按 tier desc + created_at desc 取最新一条。
+ */
 async function loadBestAnalysis(): Promise<Map<number, BestAnalysis>> {
   const client = getAdminClient();
   const rows = await pageAll<{
-    repository_id: number;
-    tier: number;
-    category: RepoCategory | null;
+    id: number;
+    category: string | null;
     mobile_relevance: number | null;
     feasibility: number | null;
     effort_estimate: number | null;
     ecosystem_gap: number | null;
   }>((from, to) =>
     client
-      .from('analysis')
-      .select('repository_id, tier, category, mobile_relevance, feasibility, effort_estimate, ecosystem_gap')
+      .from('repo_board')
+      .select('id, category, mobile_relevance, feasibility, effort_estimate, ecosystem_gap')
       .range(from, to),
   );
-  const map = new Map<number, { tier: number; a: BestAnalysis }>();
+  const map = new Map<number, BestAnalysis>();
   for (const r of rows) {
-    const prev = map.get(r.repository_id);
-    if (!prev || r.tier > prev.tier) {
-      map.set(r.repository_id, { tier: r.tier, a: r });
-    }
+    map.set(r.id, {
+      category: r.category,
+      mobile_relevance: r.mobile_relevance,
+      feasibility: r.feasibility,
+      effort_estimate: r.effort_estimate,
+      ecosystem_gap: r.ecosystem_gap,
+    });
   }
-  return new Map(Array.from(map, ([k, v]) => [k, v.a]));
+  return map;
 }
 
 async function loadHints(): Promise<Map<number, HarmonyState>> {
@@ -100,11 +108,19 @@ export async function runScore(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('score');
   try {
     const client = getAdminClient();
-    let repoQ = client.from('repositories').select('id, stars').order('stars', { ascending: false });
+    let repoQ = client
+      .from('repositories')
+      .select('id, stars, is_archived')
+      .order('stars', { ascending: false });
     if (opts.ids?.length) repoQ = repoQ.in('id', opts.ids);
     const { data: repoData, error } = await repoQ;
     if (error) throw new Error(`加载 repositories 失败:${error.message}`);
-    const repos = (repoData ?? []) as { id: number; stars: number }[];
+    const allRepos = (repoData ?? []) as { id: number; stars: number; is_archived: boolean }[];
+
+    // 过滤已归档仓库
+    const repos = allRepos.filter((r) => !r.is_archived);
+    const archivedCount = allRepos.length - repos.length;
+    if (archivedCount > 0) log(`跳过 ${archivedCount} 个已归档仓库`);
 
     const [analysis, hints, overrides, velocity] = await Promise.all([
       loadBestAnalysis(),
@@ -142,8 +158,8 @@ export async function runScore(opts: StageOpts = {}): Promise<void> {
     }));
 
     await upsertBatched('priority_rankings', rows, { onConflict: 'repository_id' });
-    await finishRun(runId, 'success', { count: rows.length });
-    log(`score 完成:${rows.length} 条`);
+    await finishRun(runId, 'success', { count: rows.length, archived: archivedCount });
+    log(`score 完成:${rows.length} 条(跳过 ${archivedCount} 个归档)`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

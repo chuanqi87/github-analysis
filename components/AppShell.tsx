@@ -4,7 +4,7 @@ import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import {
   DashboardOutlined,
-  AuditOutlined,
+  DatabaseOutlined,
   AppstoreOutlined,
   PieChartOutlined,
   FireOutlined,
@@ -15,7 +15,7 @@ import type { ReactNode } from 'react';
 
 const ROUTES = [
   { path: '/', name: '优先级总榜', icon: <DashboardOutlined /> },
-  { path: '/admin', name: '人工审核', icon: <AuditOutlined /> },
+  { path: '/admin', name: '仓库管理', icon: <DatabaseOutlined /> },
   { path: '/categories', name: '分类分布', icon: <AppstoreOutlined /> },
   { path: '/harmony', name: '鸿蒙化率', icon: <PieChartOutlined /> },
   { path: '/trending', name: '每日热点', icon: <FireOutlined /> },

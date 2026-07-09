@@ -2,9 +2,9 @@
 import { getSupabase } from '@/lib/supabase/client';
 import type {
   HarmonyState,
-  RepoCategory,
   ScoreBreakdown,
   AdaptationPoint,
+  ArchivedReason,
 } from '@/lib/types';
 
 export interface BoardRow {
@@ -20,11 +20,16 @@ export interface BoardRow {
   topics: string[] | null;
   license: string | null;
   pushed_at: string | null;
+  is_archived: boolean;
+  archived_reason: ArchivedReason | null;
   priority_score: number | null;
   rank: number | null;
   breakdown: ScoreBreakdown | null;
-  category: RepoCategory | null;
-  subcategory: string | null;
+  // 动态分类(来自 categories 表,通过视图 join)
+  category: string | null;          // slug
+  subcategory: string | null;       // slug
+  category_name: string | null;     // 中文名
+  subcategory_name: string | null;  // 中文名
   analysis_tier: number | null;
   harmony_suggestion: HarmonyState | null;
   mobile_relevance: number | null;
@@ -54,11 +59,17 @@ export interface BoardRow {
 
 export interface BoardFilters {
   keyword?: string;
-  category?: RepoCategory;
+  category?: string;  // slug
   effectiveState?: HarmonyState;
   language?: string;
   reviewed?: boolean;
   excludeAdapted?: boolean;
+  /** 'analyzed' = 已分析(tier>=1), 'unanalyzed' = 未分析, undefined = 全部 */
+  analysisStatus?: 'analyzed' | 'unanalyzed';
+  /** 归档过滤:true=仅归档, false=排除归档, undefined=全部 */
+  archived?: boolean;
+  /** 是否排除已归档仓库(默认 true) */
+  excludeArchived?: boolean;
 }
 
 export interface BoardPage {
@@ -67,10 +78,10 @@ export interface BoardPage {
 }
 
 export async function fetchBoard(
-  params: { page: number; pageSize: number; filters?: BoardFilters },
+  params: { page: number; pageSize: number; filters?: BoardFilters; orderBy?: string; orderAsc?: boolean },
 ): Promise<BoardPage> {
   const sb = getSupabase();
-  const { page, pageSize, filters = {} } = params;
+  const { page, pageSize, filters = {}, orderBy = 'stars', orderAsc = false } = params;
   let q = sb.from('repo_board').select('*', { count: 'exact' });
 
   if (filters.keyword) q = q.ilike('full_name', `%${filters.keyword}%`);
@@ -79,11 +90,21 @@ export async function fetchBoard(
   if (filters.language) q = q.eq('primary_language', filters.language);
   if (typeof filters.reviewed === 'boolean') q = q.eq('reviewed', filters.reviewed);
   if (filters.excludeAdapted) q = q.neq('effective_state', 'ADAPTED');
+  if (filters.analysisStatus === 'analyzed') q = q.not('analysis_tier', 'is', null);
+  if (filters.analysisStatus === 'unanalyzed') q = q.is('analysis_tier', null);
+
+  // 归档过滤
+  if (filters.archived === true) {
+    q = q.eq('is_archived', true);
+  } else if (filters.archived === false) {
+    q = q.eq('is_archived', false);
+  } else if (filters.excludeArchived) {
+    q = q.eq('is_archived', false);
+  }
 
   const from = (page - 1) * pageSize;
   q = q
-    .order('priority_score', { ascending: false, nullsFirst: false })
-    .order('stars', { ascending: false })
+    .order(orderBy, { ascending: orderAsc, nullsFirst: false })
     .range(from, from + pageSize - 1);
 
   const { data, error, count } = await q;
@@ -99,7 +120,8 @@ export async function fetchRepoByFullName(fullName: string): Promise<BoardRow | 
 }
 
 export interface CategoryStat {
-  category: string;
+  category: string;          // slug
+  category_name: string;     // 中文名
   total: number;
   avg_priority: number | null;
   adapted: number;
@@ -232,4 +254,44 @@ export async function fetchTier3Analysis(repositoryId: number): Promise<Tier3Ana
 
   if (error) throw new Error(error.message);
   return (data as Tier3Analysis) ?? null;
+}
+
+// ─── 仓库统计 ─────────────────────────────────────────────────────────────
+
+export interface RepoStats {
+  total: number;
+  analyzed: number;
+  unanalyzed: number;
+  archived: number;
+}
+
+export async function fetchRepoStats(): Promise<RepoStats> {
+  const sb = getSupabase();
+
+  // 总数
+  const { count: total, error: e1 } = await sb
+    .from('repositories')
+    .select('*', { count: 'exact', head: true });
+  if (e1) throw new Error(e1.message);
+
+  // 已分析数 (有 analysis 记录的)
+  const { count: analyzed, error: e2 } = await sb
+    .from('repo_board')
+    .select('id', { count: 'exact', head: true })
+    .not('analysis_tier', 'is', null);
+  if (e2) throw new Error(e2.message);
+
+  // 归档数
+  const { count: archived, error: e3 } = await sb
+    .from('repositories')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_archived', true);
+  if (e3) throw new Error(e3.message);
+
+  return {
+    total: total ?? 0,
+    analyzed: analyzed ?? 0,
+    unanalyzed: (total ?? 0) - (analyzed ?? 0),
+    archived: archived ?? 0,
+  };
 }

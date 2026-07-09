@@ -1,7 +1,11 @@
 // 阶段5:tier-1 LLM 粗分类(全量),幂等跳过未变化的项目。
+// 已归档仓库跳过分析。
+// v3: 支持动态二级分类,LLM 可提议新分类。
 import 'dotenv/config';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { classifyRepo, classifyInputHash, type AnalyzeRepo } from '@/lib/llm/classify';
+import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
+import { loadCategoryTree } from '@/lib/category/loader';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
@@ -27,15 +31,24 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
 export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('llm-classify');
   try {
-    const repos = await loadStageRepos(opts);
+    const allRepos = await loadStageRepos(opts);
+    // 过滤已归档仓库
+    const repos = allRepos.filter((r) => !r.is_archived);
+    const archivedCount = allRepos.length - repos.length;
+    if (archivedCount > 0) log(`跳过 ${archivedCount} 个已归档仓库`);
+
     const ids = repos.map((r) => r.id);
     const signals = await loadSignalsMap(ids);
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
-    log(`tier-1 分类 ${repos.length} 个仓库(百炼)...`);
+
+    // 加载动态分类树
+    const categoryTree = await loadCategoryTree();
+    log(`tier-1 分类 ${repos.length} 个仓库(百炼),${categoryTree.length} 个分类节点…`);
 
     let skipped = 0;
     let analyzed = 0;
     let failed = 0;
+    let newCategories = 0;
     const rows: Record<string, unknown>[] = [];
 
     await pMap(
@@ -56,18 +69,29 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
           return;
         }
         try {
-          const out = await classifyRepo(analyzeRepo, sig);
+          const out = await classifyRepo(analyzeRepo, sig, categoryTree);
+
+          // 解析分类 slug → 数据库 ID,处理新分类提议
+          const adminClient = getAdminClient();
+          const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);
+          if (resolved.created_new) newCategories++;
+
           rows.push({
             repository_id: repo.id,
             tier: 1,
             model: out.model,
             prompt_version: out.prompt_version,
             input_hash: out.input_hash,
-            category: out.data.category,
-            subcategory: out.data.subcategory,
+            // 新列:FK ID
+            category_id: resolved.category_id,
+            subcategory_id: resolved.subcategory_id,
+            // 旧列:兼容过渡(写入枚举值,从 slug 反推大写)
+            category: out.data.category.toUpperCase(),
+            subcategory: out.data.subcategory || '',
             harmony_suggestion: out.data.harmony_suggestion,
             mobile_relevance: out.data.mobile_relevance,
             feasibility: out.data.feasibility,
+            harmony_adapted_repo_url: out.data.harmony_adapted_repo_url,
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,
@@ -83,8 +107,8 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
     );
 
     await upsertBatched('analysis', rows, { onConflict: 'repository_id,tier,prompt_version,model' });
-    await finishRun(runId, 'success', { analyzed, skipped, failed });
-    log(`llm-classify 完成:分析 ${analyzed}、跳过 ${skipped}、失败 ${failed}`);
+    await finishRun(runId, 'success', { analyzed, skipped, failed, archived: archivedCount, newCategories });
+    log(`llm-classify 完成:分析 ${analyzed}、跳过 ${skipped}、失败 ${failed}、归档 ${archivedCount}、新建分类 ${newCategories}`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

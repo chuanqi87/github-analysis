@@ -1,10 +1,22 @@
 -- ============================================================================
--- 看板视图:把连表 + 有效鸿蒙状态 + 聚合下推到 Postgres。
--- security_invoker=on → 沿用底表的 RLS(公开只读)。
+-- 归档仓库标记:is_archived + archived_reason
+-- 检测来源:1) GitHub API archived 字段  2) README 关键词
+-- 归档仓库不参与 LLM 分析,优先级评分自动沉底。
 -- ============================================================================
 
--- 单仓看板行:元数据 + 优先级 + 最新分析 + 信号 + 人工标记 + 有效状态。
+-- ---- repositories 表增加归档字段(幂等) --------------------------------
+alter table repositories add column if not exists is_archived boolean not null default false;
+alter table repositories add column if not exists archived_reason text;  -- 'github_archived' | 'readme_archived' | null
+
+-- 索引:快速过滤归档仓库
+create index if not exists idx_repositories_archived on repositories (is_archived) where is_archived = true;
+
+-- ---- 重建所有视图(合并 gitcode + archived 字段,使用 DROP 避免列名冲突) ---
+drop view if exists v_category_stats;
+drop view if exists v_harmony_stats;
 drop view if exists repo_board;
+
+-- 单仓看板行
 create view repo_board
 with (security_invoker = on) as
 select
@@ -29,6 +41,7 @@ select
   a.subcategory,
   a.tier               as analysis_tier,
   a.harmony_suggestion,
+  a.harmony_adapted_repo_url,
   a.mobile_relevance,
   a.feasibility,
   a.effort_estimate,
@@ -46,6 +59,9 @@ select
   hs.registry_source,
   hs.source_repo_url,
   hs.keyword_score,
+  hs.gitcode_matched,
+  hs.gitcode_repo_url,
+  hs.gitcode_repo_name,
   o.state              as override_state,
   o.note               as override_note,
   o.marked_by,
@@ -63,8 +79,7 @@ left join lateral (
 left join harmony_signals hs on hs.repository_id = r.id
 left join harmony_overrides o on o.repository_id = r.id;
 
--- 分类分布聚合
-drop view if exists v_category_stats;
+-- 分类分布聚合(排除归档)
 create view v_category_stats
 with (security_invoker = on) as
 select
@@ -86,8 +101,7 @@ left join harmony_overrides o on o.repository_id = r.id
 where not r.is_archived
 group by 1;
 
--- 鸿蒙化状态分布聚合
-drop view if exists v_harmony_stats;
+-- 鸿蒙化状态分布聚合(排除归档)
 create view v_harmony_stats
 with (security_invoker = on) as
 select

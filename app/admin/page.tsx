@@ -9,23 +9,34 @@ import {
   Input,
   Modal,
   Radio,
+  Segmented,
+  Select,
   Space,
+  Statistic,
+  Switch,
   Tag,
+  Tooltip,
   Typography,
   message,
+  Row,
+  Col,
 } from 'antd';
 import type { Session } from '@supabase/supabase-js';
 import Link from 'next/link';
 import {
-  CATEGORY_LABELS,
+
   HARMONY_STATE_LABELS,
   HARMONY_STATES,
+  ARCHIVED_REASON_LABELS,
   type HarmonyState,
+  type ArchivedReason,
 } from '@/lib/types';
-import { fetchBoard, upsertOverride, type BoardRow } from '@/lib/queries';
+import { fetchBoard, fetchRepoStats, upsertOverride, type BoardRow, type RepoStats } from '@/lib/queries';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import NotConfigured from '@/components/NotConfigured';
+
+type AnalysisFilter = 'all' | 'analyzed' | 'unanalyzed' | 'archived';
 
 function SignalTags({ r }: { r: BoardRow }) {
   const tags: string[] = [];
@@ -43,6 +54,18 @@ function SignalTags({ r }: { r: BoardRow }) {
         </Tag>
       ))}
     </Space>
+  );
+}
+
+function ArchivedTag({ row }: { row: BoardRow }) {
+  if (!row.is_archived) return null;
+  const reason = row.archived_reason
+    ? ARCHIVED_REASON_LABELS[row.archived_reason as ArchivedReason]
+    : '已归档';
+  return (
+    <Tooltip title={reason}>
+      <Tag color="default">📦 归档</Tag>
+    </Tooltip>
   );
 }
 
@@ -84,12 +107,58 @@ function LoginCard({ onLogin }: { onLogin: () => void }) {
   );
 }
 
+function StatsCards({ stats }: { stats: RepoStats | null }) {
+  if (!stats) return null;
+  const analyzedPct = stats.total > 0 ? ((stats.analyzed / stats.total) * 100).toFixed(1) : '0';
+  const archivedPct = stats.total > 0 ? ((stats.archived / stats.total) * 100).toFixed(1) : '0';
+  return (
+    <Row gutter={16} style={{ marginBottom: 16 }}>
+      <Col span={6}>
+        <Card>
+          <Statistic title="仓库总数" value={stats.total} />
+        </Card>
+      </Col>
+      <Col span={6}>
+        <Card>
+          <Statistic
+            title="已分析"
+            value={stats.analyzed}
+            suffix={<span style={{ fontSize: 14, color: '#8c8c8c' }}>({analyzedPct}%)</span>}
+            valueStyle={{ color: '#3f8600' }}
+          />
+        </Card>
+      </Col>
+      <Col span={6}>
+        <Card>
+          <Statistic
+            title="待分析"
+            value={stats.unanalyzed}
+            valueStyle={{ color: '#cf1322' }}
+          />
+        </Card>
+      </Col>
+      <Col span={6}>
+        <Card>
+          <Statistic
+            title="已归档(无需分析)"
+            value={stats.archived}
+            suffix={<span style={{ fontSize: 14, color: '#8c8c8c' }}>({archivedPct}%)</span>}
+            valueStyle={{ color: '#8c8c8c' }}
+          />
+        </Card>
+      </Col>
+    </Row>
+  );
+}
+
 export default function AdminPage() {
   const actionRef = useRef<ActionType>();
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [editing, setEditing] = useState<BoardRow | null>(null);
   const [form] = Form.useForm();
+  const [analysisFilter, setAnalysisFilter] = useState<AnalysisFilter>('all');
+  const [stats, setStats] = useState<RepoStats | null>(null);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -104,6 +173,13 @@ export default function AdminPage() {
     const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // 加载统计数据
+  useEffect(() => {
+    if (isSupabaseConfigured()) {
+      fetchRepoStats().then(setStats).catch(console.error);
+    }
+  }, [analysisFilter]);
 
   if (!isSupabaseConfigured()) return <NotConfigured />;
   if (!ready) return null;
@@ -133,6 +209,7 @@ export default function AdminPage() {
       message.success(`已标记 ${editing.full_name}`);
       setEditing(null);
       actionRef.current?.reload();
+      fetchRepoStats().then(setStats).catch(console.error);
     } catch (e) {
       message.error(`保存失败(可能无写入权限):${(e as Error).message}`);
     }
@@ -144,9 +221,14 @@ export default function AdminPage() {
       dataIndex: 'keyword',
       render: (_, r) => (
         <Space direction="vertical" size={0}>
-          <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
-            <Typography.Text strong>{r.full_name}</Typography.Text>
-          </Link>
+          <Space align="center" size={4}>
+            <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
+              <Typography.Text strong style={r.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>
+                {r.full_name}
+              </Typography.Text>
+            </Link>
+            <ArchivedTag row={r} />
+          </Space>
           <Typography.Text type="secondary" ellipsis style={{ maxWidth: 380 }}>
             {r.description}
           </Typography.Text>
@@ -154,16 +236,47 @@ export default function AdminPage() {
       ),
     },
     {
+      title: '分析状态',
+      dataIndex: 'analysisStatus',
+      width: 110,
+      hideInSearch: true,
+      render: (_, r) => {
+        if (r.is_archived) {
+          return <Tag color="default">📦 归档</Tag>;
+        }
+        return r.analysis_tier != null ? (
+          <Tag color="green">已分析</Tag>
+        ) : (
+          <Tag color="default">待分析</Tag>
+        );
+      },
+    },
+    {
+      title: 'Stars',
+      dataIndex: 'stars',
+      width: 90,
+      hideInSearch: true,
+      sorter: true,
+      render: (_, r) => r.stars?.toLocaleString() ?? '-',
+    },
+    {
+      title: '语言',
+      dataIndex: 'language',
+      width: 100,
+      hideInSearch: true,
+      render: (_, r) => r.primary_language ?? '-',
+    },
+    {
       title: '分类',
       dataIndex: 'category',
       width: 120,
       hideInSearch: true,
-      render: (_, r) => (r.category ? CATEGORY_LABELS[r.category] : '-'),
+      render: (_, r) => r.category_name || r.category || '-',
     },
     {
       title: '自动信号',
       dataIndex: 'signals',
-      width: 220,
+      width: 200,
       hideInSearch: true,
       render: (_, r) => <SignalTags r={r} />,
     },
@@ -220,29 +333,57 @@ export default function AdminPage() {
         </Button>
       </Space>
 
+      <StatsCards stats={stats} />
+
       <ProTable<BoardRow>
-        headerTitle="鸿蒙化人工审核"
+        headerTitle="仓库管理"
         rowKey="id"
         actionRef={actionRef}
         columns={columns}
         cardBordered
-        scroll={{ x: 1100 }}
-        options={{ reload: true }}
+        scroll={{ x: 1400 }}
+        options={{ reload: true, density: true }}
         toolBarRender={() => [
-          <Typography.Text type="secondary" key="hint">
-            标记即写入 Supabase,看板即时生效
-          </Typography.Text>,
+          <Segmented
+            key="filter"
+            options={[
+              { label: '全部', value: 'all' },
+              { label: '已分析', value: 'analyzed' },
+              { label: '待分析', value: 'unanalyzed' },
+              { label: '📦 已归档', value: 'archived' },
+            ]}
+            value={analysisFilter}
+            onChange={(v) => {
+              setAnalysisFilter(v as AnalysisFilter);
+              actionRef.current?.reload();
+            }}
+          />,
         ]}
-        pagination={{ defaultPageSize: 20 }}
-        request={async (params) => {
+        pagination={{ defaultPageSize: 20, showSizeChanger: true, showQuickJumper: true }}
+        request={async (params, sort) => {
           try {
+            // 从 ProTable sort 参数中提取排序字段
+            const sortField = sort ? Object.keys(sort)[0] : undefined;
+            const sortDir = sort ? sort[sortField!] : undefined;
+            const orderBy = sortField ?? 'stars';
+            const orderAsc = sortDir === 'ascend';
+
+            // 构建过滤器
+            const filters: Record<string, any> = { keyword: params.keyword };
+            if (analysisFilter === 'analyzed') {
+              filters.analysisStatus = 'analyzed';
+            } else if (analysisFilter === 'unanalyzed') {
+              filters.analysisStatus = 'unanalyzed';
+            } else if (analysisFilter === 'archived') {
+              filters.archived = true;
+            }
+
             const { data, total } = await fetchBoard({
               page: params.current ?? 1,
               pageSize: params.pageSize ?? 20,
-              filters: {
-                keyword: params.keyword,
-                reviewed: params.onlyPending ? false : undefined,
-              },
+              orderBy,
+              orderAsc,
+              filters,
             });
             return { data, success: true, total };
           } catch (e) {
@@ -260,6 +401,14 @@ export default function AdminPage() {
         okText="保存"
         cancelText="取消"
       >
+        {editing?.is_archived && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="该项目已被归档,通常无需分析"
+          />
+        )}
         <Form form={form} layout="vertical">
           <Form.Item name="state" label="鸿蒙化状态" rules={[{ required: true }]}>
             <Radio.Group>

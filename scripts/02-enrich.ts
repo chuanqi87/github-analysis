@@ -37,10 +37,13 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
     const byFullName = new Map(repos.map((r) => [r.full_name, r]));
     const repoUpdates: Record<string, unknown>[] = [];
     const signalUpdates: Record<string, unknown>[] = [];
+    let archivedCount = 0;
     for (const e of results) {
       if (!e.found) continue;
       const ref = byFullName.get(e.full_name);
       if (!ref) continue;
+      const isArchived = e.is_archived;
+      if (isArchived) archivedCount++;
       repoUpdates.push({
         id: ref.id,
         full_name: ref.full_name,
@@ -55,6 +58,9 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
         pushed_at: e.pushed_at,
         repo_created_at: e.repo_created_at,
         topics: e.topics,
+        is_archived: isArchived,
+        // 仅当 GitHub 标记归档时才更新 reason,避免覆盖 readme 检测结果
+        archived_reason: isArchived ? 'github_archived' : undefined,
       });
       signalUpdates.push({
         repository_id: ref.id,
@@ -69,8 +75,8 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
 
     await upsertBatched('repositories', repoUpdates, { onConflict: 'id' });
     await upsertBatched('harmony_signals', signalUpdates, { onConflict: 'repository_id' });
-    await finishRun(runId, 'success', { enriched: repoUpdates.length });
-    log(`enrich 完成:${repoUpdates.length} 条`);
+    await finishRun(runId, 'success', { enriched: repoUpdates.length, archived: archivedCount });
+    log(`enrich 完成:${repoUpdates.length} 条(其中 ${archivedCount} 个已归档)`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

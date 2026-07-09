@@ -1,23 +1,52 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ProTable, type ProColumns, type ActionType } from '@ant-design/pro-components';
 import { Space, Switch, Tag, Tooltip, Typography } from 'antd';
 import Link from 'next/link';
-import { CATEGORY_LABELS, HARMONY_STATE_LABELS, REPO_CATEGORIES, HARMONY_STATES } from '@/lib/types';
+import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS } from '@/lib/types';
+import type { CategoryTreeNode } from '@/lib/types';
 import { fetchBoard, type BoardRow } from '@/lib/queries';
+import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
 
-const categoryEnum = Object.fromEntries(
-  REPO_CATEGORIES.map((c) => [c, { text: CATEGORY_LABELS[c] }]),
-);
 const stateEnum = Object.fromEntries(HARMONY_STATES.map((s) => [s, { text: HARMONY_STATE_LABELS[s] }]));
+
+function ArchivedTag({ row }: { row: BoardRow }) {
+  if (!row.is_archived) return null;
+  const reason = row.archived_reason ? ARCHIVED_REASON_LABELS[row.archived_reason as keyof typeof ARCHIVED_REASON_LABELS] : '已归档';
+  return (
+    <Tooltip title={reason}>
+      <Tag color="default" style={{ opacity: 0.8 }}>
+        📦 归档
+      </Tag>
+    </Tooltip>
+  );
+}
 
 export default function BoardPage() {
   const actionRef = useRef<ActionType>();
   const [excludeAdapted, setExcludeAdapted] = useState(true);
+  const [excludeArchived, setExcludeArchived] = useState(true);
+  const [categoryEnum, setCategoryEnum] = useState<Record<string, { text: string }>>({});
+  const [categoryNameMap, setCategoryNameMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    loadCategoryTree().then((tree) => {
+      const tops = getTopCategories(tree);
+      const enumMap: Record<string, { text: string }> = {};
+      const nameMap: Record<string, string> = {};
+      for (const c of tops) {
+        enumMap[c.slug] = { text: c.name_cn };
+        nameMap[c.slug] = c.name_cn;
+      }
+      setCategoryEnum(enumMap);
+      setCategoryNameMap(nameMap);
+    }).catch(console.error);
+  }, []);
 
   if (!isSupabaseConfigured()) return <NotConfigured />;
 
@@ -34,9 +63,14 @@ export default function BoardPage() {
       dataIndex: 'keyword',
       render: (_, r) => (
         <Space direction="vertical" size={0}>
-          <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
-            <Typography.Text strong>{r.full_name}</Typography.Text>
-          </Link>
+          <Space align="center" size={4}>
+            <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
+              <Typography.Text strong style={r.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>
+                {r.full_name}
+              </Typography.Text>
+            </Link>
+            <ArchivedTag row={r} />
+          </Space>
           <Typography.Text type="secondary" ellipsis style={{ maxWidth: 420 }}>
             {r.description}
           </Typography.Text>
@@ -55,7 +89,10 @@ export default function BoardPage() {
       width: 130,
       valueType: 'select',
       valueEnum: categoryEnum,
-      render: (_, r) => (r.category ? CATEGORY_LABELS[r.category] : '-'),
+      render: (_, r) => {
+        const name = r.category_name || categoryNameMap[r.category ?? ''] || r.category;
+        return name ? <Tag color="blue">{name}</Tag> : '-';
+      },
     },
     {
       title: '鸿蒙状态',
@@ -95,7 +132,15 @@ export default function BoardPage() {
       scroll={{ x: 1000 }}
       toolBarRender={() => [
         <Space key="toggle">
-          <span>只看未鸿蒙化</span>
+          <span>排除已归档</span>
+          <Switch
+            checked={excludeArchived}
+            onChange={(v) => {
+              setExcludeArchived(v);
+              actionRef.current?.reload();
+            }}
+          />
+          <span>排除已鸿蒙化</span>
           <Switch
             checked={excludeAdapted}
             onChange={(v) => {
@@ -117,6 +162,7 @@ export default function BoardPage() {
               effectiveState: params.effective_state,
               language: params.primary_language,
               excludeAdapted,
+              excludeArchived,
             },
           });
           return { data, success: true, total };

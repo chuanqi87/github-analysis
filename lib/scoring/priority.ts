@@ -8,7 +8,7 @@
 // feasibility / adaptedGate 作乘子:不可行或已适配的项目自然沉底。
 // ============================================================================
 
-import type { HarmonyState, RepoCategory, ScoreBreakdown } from '@/lib/types';
+import type { HarmonyState, ScoreBreakdown } from '@/lib/types';
 
 export const WEIGHTS_VERSION = 'v1';
 
@@ -21,7 +21,27 @@ const WEIGHTS = {
 } as const;
 
 // 品类先验:该品类做鸿蒙化的移动/跨端价值。
-const CATEGORY_PRIOR: Record<RepoCategory, number> = {
+// 使用 slug 键值(与 categories 表一致),向后兼容旧枚举值(大写)。
+const SLUG_PRIOR: Record<string, number> = {
+  // 顶层分类 slug(小写)
+  ui_framework: 1.0,
+  cross_platform: 1.0,
+  media: 0.8,
+  graphics_game: 0.8,
+  network_lib: 0.7,
+  utility_lib: 0.7,
+  database: 0.65,
+  ai_ml: 0.6,
+  security: 0.6,
+  mobile_app: 0.55,
+  dev_tool: 0.4,
+  cli: 0.3,
+  build_tool: 0.3,
+  desktop_app: 0.25,
+  server_backend: 0.2,
+  learning_docs: 0.1,
+  other: 0.3,
+  // 旧枚举值(大写)兼容
   UI_FRAMEWORK: 1.0,
   CROSS_PLATFORM: 1.0,
   MEDIA: 0.8,
@@ -68,9 +88,13 @@ export function adaptedGate(state: HarmonyState | null | undefined): number {
   }
 }
 
-export function categoryPrior(category: RepoCategory | null | undefined): number {
+/**
+ * 品类先验:接受 slug(小写)或旧枚举值(大写)。
+ * 未知 slug 返回 0.4 作为安全默认值。
+ */
+export function categoryPrior(category: string | null | undefined): number {
   if (!category) return 0.4;
-  return CATEGORY_PRIOR[category] ?? 0.4;
+  return SLUG_PRIOR[category] ?? 0.4;
 }
 
 export interface ScoreInput {
@@ -79,7 +103,7 @@ export interface ScoreInput {
   velocity?: number;
   /** 有效鸿蒙状态:人工标记优先,否则自动暂定,否则 null */
   effectiveState?: HarmonyState | null;
-  category?: RepoCategory | null;
+  category?: string | null;   // slug
   /** LLM 给出的移动/跨端相关度 0-1 */
   llmMobileRelevance?: number | null;
   /** LLM 工作量估计 0-1(0 易 1 难)*/
