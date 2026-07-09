@@ -1,0 +1,101 @@
+name: code-analysis
+
+# 代码深度分析：下载仓库源码，用 Agent 实际阅读代码后评估鸿蒙化可行性。
+# 分析结果自动写入 Supabase（tier=3），前端可直接查看。
+
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: '仓库列表（逗号分隔，如 facebook/react,vuejs/core）'
+        required: false
+        default: ''
+      limit:
+        description: '--from-db 模式下分析多少个仓库'
+        required: false
+        default: '10'
+      model:
+        description: '分析模型（默认 qwen3-max）'
+        required: false
+        default: 'qwen3-max'
+  schedule:
+    - cron: '0 22 * * 3'  # 每周三 22:00 UTC 批量分析
+
+concurrency:
+  group: code-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
+      CODE_ANALYSIS_MODEL: ${{ github.event.inputs.model || 'qwen3-max' }}
+      GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/agent/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scripts/agent/requirements.txt
+
+      - name: Run code analysis agent
+        id: analyze
+        run: |
+          if [ -n "${{ github.event.inputs.repos }}" ]; then
+            # 手动指定仓库
+            REPOS=$(echo "${{ github.event.inputs.repos }}" | tr ',' ' ')
+            echo "🔍 分析指定仓库: $REPOS"
+            python scripts/agent/run.py $REPOS -v --write-db -o analysis-results.json
+          else
+            # 从 Supabase 读取待分析仓库
+            echo "🔍 从 Supabase 读取待分析仓库 (limit=${{ github.event.inputs.limit || '10' }})"
+            python scripts/agent/run.py --from-db --limit ${{ github.event.inputs.limit || '10' }} -v --write-db -o analysis-results.json
+          fi
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-analysis-results
+          path: analysis-results.json
+          retention-days: 30
+
+      - name: Print summary
+        if: always()
+        run: |
+          echo "## 📊 代码深度分析结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f analysis-results.json ]; then
+            python3 -c "
+          import json
+          with open('analysis-results.json') as f:
+              results = json.load(f)
+          print('| 仓库 | 鸿蒙化状态 | 可行性 | 工作量 | 分类 | 推荐路径 |')
+          print('|------|-----------|--------|--------|------|---------|')
+          for r in results:
+              owner = r.get('owner', '?')
+              name = r.get('name', '?')
+              analysis = r.get('analysis', {})
+              if 'error' in r:
+                  print(f'| ❌ {owner}/{name} | 分析失败 | - | - | - | {r[\"error\"][:40]} |')
+              else:
+                  harmony = analysis.get('harmony_suggestion', '?')
+                  feasibility = analysis.get('feasibility', '?')
+                  effort = analysis.get('effort_estimate', '?')
+                  category = analysis.get('category', '?')
+                  approach = analysis.get('recommended_approach', '?')[:50]
+                  print(f'| {owner}/{name} | {harmony} | {feasibility} | {effort} | {category} | {approach} |')
+          " >> $GITHUB_STEP_SUMMARY || echo "结果解析失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "未生成结果文件" >> $GITHUB_STEP_SUMMARY
+          fi

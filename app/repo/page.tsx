@@ -13,12 +13,14 @@ import {
   Spin,
   Empty,
   Progress,
+  Divider,
 } from 'antd';
 import { CATEGORY_LABELS } from '@/lib/types';
 import { fetchRepoByFullName, type BoardRow } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import NotConfigured from '@/components/NotConfigured';
+import Tier3Analysis from '@/components/Tier3Analysis';
 
 const DIFF_COLOR: Record<string, string> = { low: 'green', medium: 'gold', high: 'red' };
 
@@ -191,6 +193,12 @@ function RepoDetail() {
           <Empty description="暂无 LLM 分析(等待分析阶段)" />
         )}
       </Card>
+
+      {/* Tier-3 代码深度分析 */}
+      <Divider orientation="left" style={{ margin: '8px 0' }}>
+        Agent 深度分析
+      </Divider>
+      <Tier3Analysis repositoryId={row.id} />
     </Space>
   );
 }

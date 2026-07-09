@@ -181,3 +181,55 @@ export async function upsertOverride(input: {
   );
   if (error) throw new Error(error.message);
 }
+
+// ─── Tier-3 深度分析 ───────────────────────────────────────────────────────
+
+export interface Tier3Analysis {
+  repository_id: number;
+  project_type: string | null;
+  tech_stack: {
+    primary_language?: string;
+    languages?: string[];
+    frameworks?: string[];
+    total_lines?: number;
+    native_code_ratio?: number;
+    description?: string;
+  } | null;
+  dependencies_analysis: {
+    total_deps?: number;
+    os_specific_deps?: string[];
+    hardware_deps?: string[];
+    easy_to_adapt?: string[];
+    hard_to_adapt?: string[];
+  } | null;
+  key_files_analyzed: string[] | null;
+  adaptation_points: (AdaptationPoint & { evidence?: string })[] | null;
+  reasoning: string | null;
+  recommended_approach: string | null;
+  created_at: string;
+}
+
+export async function fetchTier3Analysis(repositoryId: number): Promise<Tier3Analysis | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from('analysis')
+    .select(`
+      repository_id,
+      project_type,
+      tech_stack,
+      dependencies_analysis,
+      key_files_analyzed,
+      adaptation_points,
+      reasoning,
+      recommended_approach,
+      created_at
+    `)
+    .eq('repository_id', repositoryId)
+    .eq('tier', 3)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as Tier3Analysis) ?? null;
+}

@@ -34,3 +34,5 @@ pnpm-debug.log*
 # scratch
 /tmp
 *.local.json
+scripts/agent/.venv/
+scripts/agent/__pycache__/

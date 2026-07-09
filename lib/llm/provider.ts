@@ -6,6 +6,21 @@ import type { LanguageModel } from 'ai';
 export const CLASSIFY_MODEL_NAME = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
 export const EVALUATE_MODEL_NAME = process.env.DASHSCOPE_MODEL_DEEP ?? 'qwen-max';
 
+// qwen3.x 为思考模型:开启 thinking 时(1)不支持 tool_choice;(2)JSON 输出约 1/3 概率不合 schema;
+// (3)推理 token 拖慢速度。注入 enable_thinking:false → 干净直出 JSON、更快、更稳。
+const disableThinkingFetch: typeof fetch = async (input, init) => {
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      const body = JSON.parse(init.body);
+      body.enable_thinking = false;
+      init = { ...init, body: JSON.stringify(body) };
+    } catch {
+      /* 非 JSON body,原样透传 */
+    }
+  }
+  return fetch(input as RequestInfo, init);
+};
+
 function getProvider() {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   if (!apiKey) {
@@ -14,6 +29,7 @@ function getProvider() {
   return createOpenAI({
     apiKey,
     baseURL: process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    fetch: disableThinkingFetch,
   });
 }
 
