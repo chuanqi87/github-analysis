@@ -64,6 +64,7 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
             prompt_version: out.prompt_version,
             input_hash: out.input_hash,
             category: out.data.category,
+            subcategory: out.data.subcategory,
             harmony_suggestion: out.data.harmony_suggestion,
             mobile_relevance: out.data.mobile_relevance,
             feasibility: out.data.feasibility,

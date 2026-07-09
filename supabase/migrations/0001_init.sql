@@ -81,6 +81,7 @@ create table if not exists analysis (
   prompt_version      text not null,
   input_hash          text not null,               -- 幂等键
   category            repo_category,
+  subcategory         text,                         -- LLM 给的细分类(自由文本)
   harmony_suggestion  harmony_state,               -- LLM 建议(非权威)
   mobile_relevance    real,
   feasibility         real,
@@ -96,6 +97,8 @@ create table if not exists analysis (
   unique (repository_id, tier, prompt_version, model)
 );
 create index if not exists idx_analysis_repo on analysis (repository_id);
+-- 兼容已存在的旧表:补列(幂等)
+alter table analysis add column if not exists subcategory text;
 
 -- ---- harmony_overrides:人工权威标记 ------------------------------------
 create table if not exists harmony_overrides (
