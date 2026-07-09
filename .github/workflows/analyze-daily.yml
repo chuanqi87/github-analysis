@@ -1,0 +1,36 @@
+name: analyze-daily
+
+# 每日热点:抓取 trending → 落库 → 补齐新仓 → 增量鸿蒙分析。
+# 顺带对 Supabase 免费项目保活(避免 7 天闲置暂停)。
+on:
+  schedule:
+    - cron: '0 20 * * *' # 每日 20:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: analyze
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
+      DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen-plus' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run daily trending
+        run: pnpm pipeline --stage=daily-trending

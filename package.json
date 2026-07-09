@@ -1,0 +1,43 @@
+{
+  "name": "github-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "鸿蒙(HarmonyOS/OpenHarmony)生态适配分析看板 — GitHub Top 项目适配价值分析",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "pipeline": "tsx scripts/pipeline.ts",
+    "gen:types": "supabase gen types typescript --local > lib/supabase/database.types.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^1.0.0",
+    "@ant-design/icons": "^5.4.0",
+    "@ant-design/nextjs-registry": "^1.0.1",
+    "@ant-design/pro-components": "^2.7.19",
+    "@supabase/supabase-js": "^2.45.0",
+    "ai": "^4.0.0",
+    "antd": "^5.21.0",
+    "bottleneck": "^2.19.5",
+    "cheerio": "^1.0.0",
+    "dayjs": "^1.11.13",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

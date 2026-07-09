@@ -1,0 +1,46 @@
+name: analyze-full
+
+# 全量分析:抓取 Star>=10000 → 富化 → 鸿蒙信号 → LLM 分析 → 评分,写入 Supabase。
+# 手动触发(可传 limit 做 MVP 切片),或每周定时。
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: '仅处理 top N(留空=全量,MVP 建议 300-500)'
+        required: false
+        default: ''
+      stage:
+        description: '单阶段运行(留空=all)'
+        required: false
+        default: 'all'
+  schedule:
+    - cron: '0 18 * * 0' # 每周日 18:00 UTC 全量刷新
+
+concurrency:
+  group: analyze
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
+      DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen-plus' }}
+      DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen-max' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run pipeline
+        run: pnpm pipeline --stage=${{ github.event.inputs.stage || 'all' }} --limit=${{ github.event.inputs.limit }}
