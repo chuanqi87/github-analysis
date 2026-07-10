@@ -40,6 +40,18 @@ const FULL_ORDER = [
   'score',
 ] as const;
 
+// 同步模式:仅获取新仓库 + 初步分析,不含 LLM 深度分析
+// 用于定时调度,确保跟踪 Star>=10000 的新项目
+const SYNC_ORDER = [
+  'fetch-top',
+  'enrich',
+  'build-registry',
+  'harmony-signals',
+  'fetch-readme',
+  'mark-archived',
+  'score',
+] as const;
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const stage = args.stage ?? 'all';
@@ -55,9 +67,19 @@ async function main() {
     return;
   }
 
+  if (stage === 'sync') {
+    log(`运行同步模式:获取新仓库 + 初步分析(不含 LLM)`);
+    for (const s of SYNC_ORDER) {
+      log(`==== 阶段:${s} ====`);
+      await STAGES[s](opts);
+    }
+    log('同步完成');
+    return;
+  }
+
   const fn = STAGES[stage];
   if (!fn) {
-    console.error(`未知阶段:${stage}。可选:${Object.keys(STAGES).join(', ')}, all`);
+    console.error(`未知阶段:${stage}。可选:${Object.keys(STAGES).join(', ')}, all, sync`);
     process.exit(1);
   }
   await fn(opts);

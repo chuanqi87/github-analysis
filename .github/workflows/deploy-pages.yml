@@ -36,6 +36,8 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           NEXT_PUBLIC_ADMIN_EMAIL: ${{ vars.NEXT_PUBLIC_ADMIN_EMAIL }}
+          NEXT_PUBLIC_GH_REPO: ${{ vars.NEXT_PUBLIC_GH_REPO || 'chuanqi87/github-analysis' }}
+          NEXT_PUBLIC_GH_TRIGGER_TOKEN: ${{ secrets.NEXT_PUBLIC_GH_TRIGGER_TOKEN }}
           NEXT_TELEMETRY_DISABLED: '1'
         run: pnpm build
       - name: Add .nojekyll

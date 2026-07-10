@@ -340,3 +340,71 @@ export async function fetchRepoStats(): Promise<RepoStats> {
     archived: archived ?? 0,
   };
 }
+
+// ─── Pipeline 运行记录 ─────────────────────────────────────────────────────
+
+export interface PipelineRun {
+  id: number;
+  stage: string;
+  status: string;
+  stats: Record<string, unknown> | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export async function fetchPipelineRuns(limit = 20): Promise<PipelineRun[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from('pipeline_runs')
+    .select('*')
+    .order('started_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as PipelineRun[];
+}
+
+// ─── GitHub Actions 触发 ────────────────────────────────────────────────────
+
+export interface WorkflowDispatchResult {
+  success: boolean;
+  message: string;
+}
+
+export async function triggerGitHubWorkflow(
+  workflowId: string,
+  inputs?: Record<string, string>,
+): Promise<WorkflowDispatchResult> {
+  const token = process.env.NEXT_PUBLIC_GH_TRIGGER_TOKEN;
+  const repo = process.env.NEXT_PUBLIC_GH_REPO || 'chuanqi87/github-analysis';
+
+  if (!token) {
+    return { success: false, message: '未配置 GH_TRIGGER_TOKEN，请在环境变量中设置 NEXT_PUBLIC_GH_TRIGGER_TOKEN' };
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/actions/workflows/${workflowId}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({
+          ref: 'main',
+          inputs: inputs ?? {},
+        }),
+      },
+    );
+
+    if (res.status === 204) {
+      return { success: true, message: '任务已触发，请稍后查看运行结果' };
+    }
+
+    const err = await res.text();
+    return { success: false, message: `触发失败 (${res.status}): ${err}` };
+  } catch (e) {
+    return { success: false, message: `请求异常: ${(e as Error).message}` };
+  }
+}
