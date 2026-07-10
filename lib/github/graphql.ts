@@ -24,6 +24,7 @@ export interface EnrichResult {
   topics: string[];
   // 归档状态
   is_archived: boolean;
+  latest_release_at: string | null;
   // 工程文件信号
   has_oh_package: boolean;
   has_build_profile: boolean;
@@ -49,6 +50,7 @@ interface RepoNode {
   licenseInfo: { spdxId: string | null } | null;
   repositoryTopics: { nodes: { topic: { name: string } }[] } | null;
   isArchived: boolean;
+  latestRelease: { nodes: { publishedAt: string | null }[] } | null;
   ohPackage: { __typename: string } | null;
   buildProfile: { __typename: string } | null;
   moduleJson: { __typename: string } | null;
@@ -77,6 +79,7 @@ function buildQuery(batch: { owner: string; name: string }[]): string {
         licenseInfo { spdxId }
         repositoryTopics(first: 20) { nodes { topic { name } } }
         isArchived
+        latestRelease: releases(first: 1, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { publishedAt } }
         ohPackage: object(expression: "HEAD:oh-package.json5") { __typename }
         buildProfile: object(expression: "HEAD:build-profile.json5") { __typename }
         moduleJson: object(expression: "HEAD:module.json5") { __typename }
@@ -128,6 +131,7 @@ function mapNode(fullName: string, node: RepoNode | null): EnrichResult {
       repo_created_at: null,
       topics: [],
       is_archived: false,
+      latest_release_at: null,
       has_oh_package: false,
       has_build_profile: false,
       has_module_json5: false,
@@ -156,6 +160,7 @@ function mapNode(fullName: string, node: RepoNode | null): EnrichResult {
     repo_created_at: node.createdAt,
     topics: (node.repositoryTopics?.nodes ?? []).map((n) => n.topic.name),
     is_archived: node.isArchived ?? false,
+    latest_release_at: node.latestRelease?.nodes?.[0]?.publishedAt ?? null,
     has_oh_package: !!node.ohPackage,
     has_build_profile: !!node.buildProfile,
     has_module_json5: !!node.moduleJson,

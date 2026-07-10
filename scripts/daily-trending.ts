@@ -187,6 +187,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
           pushed_at: e.pushed_at,
           repo_created_at: e.repo_created_at,
           topics: e.topics,
+          latest_release_at: e.latest_release_at,
         });
         sigRows.push({
           repository_id: e.id,

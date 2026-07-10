@@ -58,6 +58,7 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
         pushed_at: e.pushed_at,
         repo_created_at: e.repo_created_at,
         topics: e.topics,
+        latest_release_at: e.latest_release_at,
         is_archived: isArchived,
         // 仅当 GitHub 标记归档时才更新 reason,避免覆盖 readme 检测结果
         archived_reason: isArchived ? 'github_archived' : undefined,
