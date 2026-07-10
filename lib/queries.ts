@@ -112,6 +112,21 @@ export async function fetchBoard(
   return { data: (data ?? []) as BoardRow[], total: count ?? 0 };
 }
 
+export async function fetchLanguages(): Promise<string[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from('repo_board')
+    .select('primary_language')
+    .not('primary_language', 'is', null)
+    .order('primary_language');
+  if (error) throw new Error(error.message);
+  const langs = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.primary_language) langs.add(row.primary_language);
+  }
+  return Array.from(langs).sort();
+}
+
 export async function fetchRepoByFullName(fullName: string): Promise<BoardRow | null> {
   const sb = getSupabase();
   const { data, error } = await sb.from('repo_board').select('*').eq('full_name', fullName).maybeSingle();
@@ -159,6 +174,11 @@ export interface TrendingRow {
   stars: number | null;
   total_score: number | null;
   rank: number | null;
+  // 以下字段由 fetchTrending 关联 repo_board 填充
+  analysis_tier: number | null;
+  effective_state: HarmonyState | null;
+  category_name: string | null;
+  priority_score: number | null;
 }
 
 export async function fetchLatestTrendingDate(): Promise<string | null> {
@@ -181,7 +201,32 @@ export async function fetchTrending(date: string): Promise<TrendingRow[]> {
     .eq('captured_date', date)
     .order('rank', { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []) as TrendingRow[];
+  const rows = (data ?? []) as TrendingRow[];
+
+  // 关联 repo_board 获取分析状态(仅对有 repository_id 的行)
+  const repoIds = rows.filter((r) => r.repository_id != null).map((r) => r.repository_id!);
+  if (repoIds.length > 0) {
+    const { data: boardData } = await sb
+      .from('repo_board')
+      .select('id, analysis_tier, effective_state, category_name, priority_score')
+      .in('id', repoIds);
+    const boardMap = new Map(
+      ((boardData ?? []) as { id: number; analysis_tier: number | null; effective_state: HarmonyState | null; category_name: string | null; priority_score: number | null }[]).map(
+        (r) => [r.id, r],
+      ),
+    );
+    for (const row of rows) {
+      if (row.repository_id != null) {
+        const board = boardMap.get(row.repository_id);
+        row.analysis_tier = board?.analysis_tier ?? null;
+        row.effective_state = board?.effective_state ?? null;
+        row.category_name = board?.category_name ?? null;
+        row.priority_score = board?.priority_score ?? null;
+      }
+    }
+  }
+
+  return rows;
 }
 
 export async function upsertOverride(input: {

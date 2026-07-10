@@ -1,4 +1,4 @@
-// 每日热点:抓取 trending → 落库快照 → 补齐新仓 → 对热点仓做增量鸿蒙分析。
+// 每日热点:抓取 trending → 跨源去重 + 热度排名 Top-N → 落库快照 → 补齐新仓 → 对热点仓做增量鸿蒙分析。
 import 'dotenv/config';
 import { fetchTrending } from '@/lib/sources/ossinsight';
 import { fetchGithubTrending } from '@/lib/sources/githubTrending';
@@ -9,6 +9,9 @@ import { log, today, type StageOpts } from '@/scripts/_common';
 import { runHarmonySignals } from '@/scripts/03-harmony-signals';
 import { runLlmClassify } from '@/scripts/05-llm-classify';
 import { runScore } from '@/scripts/07-score';
+
+/** 每日热点保留条数 */
+const TOP_N = 10;
 
 interface SnapshotSeed {
   source: string;
@@ -62,17 +65,90 @@ async function collectSeeds(): Promise<SnapshotSeed[]> {
   return seeds;
 }
 
+/**
+ * 跨数据源去重 + 热度排名。
+ *
+ * 策略:
+ * 1. 按 repo_name 分组,同一项目出现在多个来源时合并为一条;
+ * 2. 热度分 = Σ(1/rank) 各来源倒数排名之和,出现在多源的项目自然获得加权;
+ * 3. 按热度分降序取 Top-N,重新编号 rank 1..N;
+ * 4. 元数据(stars/language/description)优先取 OSS Insight(数据更全)。
+ */
+function deduplicateAndTopN(seeds: SnapshotSeed[], topN = TOP_N): SnapshotSeed[] {
+  // 按 repo_name 分组
+  const grouped = new Map<string, SnapshotSeed[]>();
+  for (const s of seeds) {
+    const list = grouped.get(s.repo_name) ?? [];
+    list.push(s);
+    grouped.set(s.repo_name, list);
+  }
+
+  // 计算统一热度分
+  interface ScoredEntry {
+    seed: SnapshotSeed;
+    hotScore: number;
+    multiSource: boolean;
+  }
+  const scored: ScoredEntry[] = [];
+
+  for (const [, entries] of grouped) {
+    // 优先取 OSS Insight 数据(stars/forks/total_score 更全)
+    const ossEntry = entries.find((e) => e.source === 'ossinsight');
+    const bestData = ossEntry ?? entries[0];
+
+    // 热度分:各来源倒数排名之和
+    let hotScore = 0;
+    const sourceSet = new Set<string>();
+    for (const e of entries) {
+      if (e.rank && e.rank > 0) hotScore += 1 / e.rank;
+      sourceSet.add(e.source);
+    }
+
+    const sources = Array.from(sourceSet).sort();
+
+    scored.push({
+      seed: {
+        ...bestData,
+        // 多来源用逗号拼接
+        source: sources.join(','),
+      },
+      hotScore,
+      multiSource: sources.length > 1,
+    });
+  }
+
+  // 按热度分降序排序,取 Top-N
+  scored.sort((a, b) => {
+    // 多来源优先(同分时)
+    if (a.multiSource !== b.multiSource) return a.multiSource ? -1 : 1;
+    return b.hotScore - a.hotScore;
+  });
+  const top = scored.slice(0, topN);
+
+  // 重新编号 rank,把 hotScore 存入 total_score
+  return top.map((item, i) => ({
+    ...item.seed,
+    rank: i + 1,
+    total_score: Math.round(item.hotScore * 10000) / 10000, // 保留 4 位小数
+  }));
+}
+
 export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('daily-trending');
   try {
     const client = getAdminClient();
-    const seeds = await collectSeeds();
-    const names = Array.from(new Set(seeds.map((s) => s.repo_name)));
-    if (names.length === 0) {
+    const rawSeeds = await collectSeeds();
+    if (rawSeeds.length === 0) {
       await finishRun(runId, 'success', { count: 0 });
       log('无热点数据');
       return;
     }
+
+    // 跨源去重 + 热度排名 Top-N
+    const seeds = deduplicateAndTopN(rawSeeds);
+    log(`去重后 ${seeds.length} 条(Top ${TOP_N},原始 ${rawSeeds.length} 条)`);
+
+    const names = Array.from(new Set(seeds.map((s) => s.repo_name)));
 
     // 已在库的仓
     const nameToId = new Map<string, number>();
@@ -126,7 +202,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
       await upsertBatched('harmony_signals', sigRows, { onConflict: 'repository_id' });
     }
 
-    // 落库快照(带 repository_id)
+    // 落库快照(带 repository_id,去重后每条 repo 只写一行)
     const date = today();
     const snapRows = seeds.map((s) => ({
       captured_date: date,
@@ -140,7 +216,8 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
       total_score: s.total_score,
       rank: s.rank,
     }));
-    await upsertBatched('trending_snapshots', snapRows, { onConflict: 'captured_date,source,repo_name' });
+    // 注意:去重后 unique 约束是 (captured_date, repo_name)
+    await upsertBatched('trending_snapshots', snapRows, { onConflict: 'captured_date,repo_name' });
 
     // 对热点仓做增量鸿蒙分析(信号 → tier-1 分类 → 评分)
     const ids = Array.from(new Set(Array.from(nameToId.values())));
@@ -151,8 +228,12 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
       await runScore({ ids });
     }
 
-    await finishRun(runId, 'success', { snapshots: snapRows.length, analyzed: ids.length });
-    log(`daily-trending 完成:快照 ${snapRows.length}、分析 ${ids.length}`);
+    await finishRun(runId, 'success', {
+      raw_seeds: rawSeeds.length,
+      snapshots: snapRows.length,
+      analyzed: ids.length,
+    });
+    log(`daily-trending 完成:原始 ${rawSeeds.length} → 去重 Top${TOP_N} ${snapRows.length}、分析 ${ids.length}`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;

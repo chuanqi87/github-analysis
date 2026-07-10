@@ -5,7 +5,7 @@ import { Space, Switch, Tag, Tooltip, Typography } from 'antd';
 import Link from 'next/link';
 import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS } from '@/lib/types';
 import type { CategoryTreeNode } from '@/lib/types';
-import { fetchBoard, type BoardRow } from '@/lib/queries';
+import { fetchBoard, fetchLanguages, type BoardRow } from '@/lib/queries';
 import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
@@ -32,6 +32,7 @@ export default function BoardPage() {
   const [excludeArchived, setExcludeArchived] = useState(true);
   const [categoryEnum, setCategoryEnum] = useState<Record<string, { text: string }>>({});
   const [categoryNameMap, setCategoryNameMap] = useState<Record<string, string>>({});
+  const [languageEnum, setLanguageEnum] = useState<Record<string, { text: string }>>({});
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -46,6 +47,11 @@ export default function BoardPage() {
       setCategoryEnum(enumMap);
       setCategoryNameMap(nameMap);
     }).catch(console.error);
+    fetchLanguages().then((langs) => {
+      const langMap: Record<string, { text: string }> = {};
+      for (const l of langs) langMap[l] = { text: l };
+      setLanguageEnum(langMap);
+    }).catch(console.error);
   }, []);
 
   if (!isSupabaseConfigured()) return <NotConfigured />;
@@ -56,6 +62,7 @@ export default function BoardPage() {
       dataIndex: 'rank',
       width: 70,
       hideInSearch: true,
+      sorter: true,
       render: (_, r) => r.rank ?? '-',
     },
     {
@@ -81,6 +88,8 @@ export default function BoardPage() {
       title: '语言',
       dataIndex: 'primary_language',
       width: 110,
+      valueType: 'select',
+      valueEnum: languageEnum,
       render: (_, r) => (r.primary_language ? <Tag>{r.primary_language}</Tag> : '-'),
     },
     {
@@ -107,6 +116,7 @@ export default function BoardPage() {
       dataIndex: 'stars',
       width: 90,
       hideInSearch: true,
+      sorter: true,
       render: (_, r) => r.stars.toLocaleString(),
     },
     {
@@ -118,6 +128,7 @@ export default function BoardPage() {
       dataIndex: 'priority_score',
       width: 160,
       hideInSearch: true,
+      sorter: true,
       render: (_, r) => <ScoreBar score={r.priority_score} />,
     },
   ];
@@ -151,11 +162,19 @@ export default function BoardPage() {
         </Space>,
       ]}
       pagination={{ defaultPageSize: 20, showSizeChanger: true }}
-      request={async (params) => {
+      request={async (params, sort) => {
         try {
+          // 从 ProTable sort 参数中提取排序字段
+          const sortField = sort ? Object.keys(sort)[0] : undefined;
+          const sortDir = sortField ? sort[sortField] : undefined;
+          const orderBy = sortField ?? 'rank';
+          const orderAsc = sortDir === 'ascend';
+
           const { data, total } = await fetchBoard({
             page: params.current ?? 1,
             pageSize: params.pageSize ?? 20,
+            orderBy,
+            orderAsc,
             filters: {
               keyword: params.keyword,
               category: params.category,
