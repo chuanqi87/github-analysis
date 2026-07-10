@@ -69,11 +69,12 @@ export interface CategoryTree {
 
 // ---- 归档来源 ---------------------------------------------------------------
 
-export const ARCHIVED_REASONS = ['github_archived', 'readme_archived'] as const;
+export const ARCHIVED_REASONS = ['github_archived', 'readme_archived', 'stale_repository'] as const;
 export type ArchivedReason = (typeof ARCHIVED_REASONS)[number];
 
 export const ARCHIVED_REASON_LABELS: Record<ArchivedReason, string> = {
   github_archived: 'GitHub 已归档',
+  stale_repository: '超过2年未更新',
   readme_archived: 'README 声明归档',
 };
 
