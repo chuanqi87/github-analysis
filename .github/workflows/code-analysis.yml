@@ -13,13 +13,13 @@ on:
       limit:
         description: '--from-db 模式下分析多少个仓库'
         required: false
-        default: '10'
+        default: '20'
       model:
         description: '分析模型（默认 qwen3-max）'
         required: false
         default: 'qwen3-max'
   schedule:
-    - cron: '0 22 * * 3'  # 每周三 22:00 UTC 批量分析
+    - cron: '0 23 * * *'  # 每日 23:00 UTC 深度分析
 
 concurrency:
   group: code-analysis
@@ -58,8 +58,8 @@ jobs:
             python scripts/agent/run.py $REPOS -v --write-db -o analysis-results.json
           else
             # 从 Supabase 读取待分析仓库
-            echo "🔍 从 Supabase 读取待分析仓库 (limit=${{ github.event.inputs.limit || '10' }})"
-            python scripts/agent/run.py --from-db --limit ${{ github.event.inputs.limit || '10' }} -v --write-db -o analysis-results.json
+            echo "🔍 从 Supabase 读取待分析仓库 (limit=${{ github.event.inputs.limit || '20' }})"
+            python scripts/agent/run.py --from-db --limit ${{ github.event.inputs.limit || '20' }} -v --write-db -o analysis-results.json
           fi
 
       - name: Upload results artifact
