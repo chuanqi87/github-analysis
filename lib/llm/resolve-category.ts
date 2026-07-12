@@ -2,7 +2,7 @@
 // 分类解析:将 LLM 输出的 category/subcategory slug 解析为数据库 ID。
 // 如果 LLM 提议了新分类,则自动创建并返回新 ID。
 // ============================================================================
-import type { CategoryTreeNode } from '@/lib/types';
+import { REPO_CATEGORIES, type CategoryTreeNode } from '@/lib/types';
 import { findBySlug, findOrCreateSubcategory, createCategory } from '@/lib/category/loader';
 
 export interface LlmCategoryOutput {
@@ -20,6 +20,15 @@ export interface ResolvedCategory {
   category_id: number | null;
   subcategory_id: number | null;
   created_new: boolean;
+  category_enum: string;
+}
+
+const VALID_ENUMS = new Set<string>(REPO_CATEGORIES);
+
+/** 将顶层分类 slug 转为合法的 repo_category 枚举值,无效时回退到 OTHER。 */
+function toCategoryEnum(slug: string): string {
+  const upper = slug.toUpperCase();
+  return VALID_ENUMS.has(upper) ? upper : 'OTHER';
 }
 
 /**
@@ -29,23 +38,23 @@ export interface ResolvedCategory {
 export function resolveCategoryFromTree(
   tree: CategoryTreeNode[],
   output: LlmCategoryOutput,
-): { category_id: number | null; subcategory_id: number | null } {
+): { category_id: number | null; subcategory_id: number | null; category_enum: string } {
   // 解析顶层分类
   const parent = findBySlug(tree, output.category);
   if (!parent || parent.parent_id !== null) {
     // slug 不匹配或不是顶层分类
-    return { category_id: null, subcategory_id: null };
+    return { category_id: null, subcategory_id: null, category_enum: 'OTHER' };
   }
 
   // 解析子分类
   if (output.subcategory) {
     const sub = findBySlug(tree, output.subcategory);
     if (sub && sub.parent_id === parent.id) {
-      return { category_id: parent.id, subcategory_id: sub.id };
+      return { category_id: parent.id, subcategory_id: sub.id, category_enum: toCategoryEnum(parent.slug) };
     }
   }
 
-  return { category_id: parent.id, subcategory_id: null };
+  return { category_id: parent.id, subcategory_id: null, category_enum: toCategoryEnum(parent.slug) };
 }
 
 /**
@@ -101,6 +110,7 @@ export async function resolveAndCreateCategory(
       category_id: parent.id,
       subcategory_id: subId,
       created_new: true,
+      category_enum: toCategoryEnum(parent.slug),
     };
   } catch (err) {
     console.error(`创建新分类失败: ${String(err)}`);

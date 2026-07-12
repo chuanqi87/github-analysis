@@ -1,0 +1,7 @@
+
+> github-analytics@0.1.0 pipeline /Users/legend/Desktop/Code/github-analytics
+> tsx scripts/pipeline.ts --stage\=score
+
+[2026-07-12T12:37:30.578Z] 跳过 1213 个已归档仓库
+[2026-07-12T12:37:33.708Z] 为 4231 个仓库计算优先级...
+[2026-07-12T12:37:43.679Z] score 完成:4231 条(跳过 1213 个归档)
