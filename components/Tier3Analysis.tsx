@@ -77,8 +77,8 @@ export default function Tier3Analysis({ repositoryId }: Props) {
           }
           key="overview"
         >
-          <Row gutter={16}>
-            <Col span={12}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} md={12}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="项目类型">
                   {data.project_type ?? '-'}
@@ -96,7 +96,7 @@ export default function Tier3Analysis({ repositoryId }: Props) {
                 </Descriptions.Item>
               </Descriptions>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="技术栈描述">
                   <Text>{ts.description ?? '-'}</Text>
@@ -137,8 +137,8 @@ export default function Tier3Analysis({ repositoryId }: Props) {
           }
           key="deps"
         >
-          <Row gutter={16}>
-            <Col span={12}>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} md={12}>
               {deps.os_specific_deps?.length ? (
                 <List
                   size="small"
@@ -167,7 +167,7 @@ export default function Tier3Analysis({ repositoryId }: Props) {
                 />
               ) : null}
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               {deps.easy_to_adapt?.length ? (
                 <List
                   size="small"

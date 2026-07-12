@@ -6,6 +6,7 @@ import { HARMONY_STATE_LABELS } from '@/lib/types';
 const COLORS: Record<HarmonyState, string> = {
   ADAPTED: 'green',
   PARTIAL: 'gold',
+  PENDING_ADAPTATION: 'orange',
   NOT_ADAPTED: 'blue',
   NOT_APPLICABLE: 'default',
 };

@@ -3,7 +3,7 @@
 // 前端和管道脚本共用。
 // ============================================================================
 
-export const HARMONY_STATES = ['ADAPTED', 'PARTIAL', 'NOT_ADAPTED', 'NOT_APPLICABLE'] as const;
+export const HARMONY_STATES = ['ADAPTED', 'PARTIAL', 'PENDING_ADAPTATION', 'NOT_ADAPTED', 'NOT_APPLICABLE'] as const;
 export type HarmonyState = (typeof HARMONY_STATES)[number];
 
 // ---- 动态二级分类体系 --------------------------------------------------------
@@ -83,6 +83,7 @@ export const ARCHIVED_REASON_LABELS: Record<ArchivedReason, string> = {
 export const HARMONY_STATE_LABELS: Record<HarmonyState, string> = {
   ADAPTED: '已鸿蒙化',
   PARTIAL: '部分适配',
+  PENDING_ADAPTATION: '待适配',
   NOT_ADAPTED: '未适配',
   NOT_APPLICABLE: '不适用',
 };

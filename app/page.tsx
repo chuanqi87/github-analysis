@@ -1,13 +1,25 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { ProTable, type ProColumns, type ActionType } from '@ant-design/pro-components';
-import { Space, Switch, Tag, Tooltip, Typography } from 'antd';
+import {
+  Space,
+  Switch,
+  Tag,
+  Tooltip,
+  Typography,
+  Input,
+  Select,
+  List,
+  Pagination,
+  Spin,
+  Flex,
+} from 'antd';
 import Link from 'next/link';
-import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS } from '@/lib/types';
-import type { CategoryTreeNode } from '@/lib/types';
+import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS, type HarmonyState } from '@/lib/types';
 import { fetchBoard, fetchLanguages, type BoardRow } from '@/lib/queries';
 import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
@@ -26,35 +38,228 @@ function ArchivedTag({ row }: { row: BoardRow }) {
   );
 }
 
-export default function BoardPage() {
-  const actionRef = useRef<ActionType>();
-  const [excludeAdapted, setExcludeAdapted] = useState(true);
-  const [excludeArchived, setExcludeArchived] = useState(true);
-  const [categoryEnum, setCategoryEnum] = useState<Record<string, { text: string }>>({});
-  const [categoryNameMap, setCategoryNameMap] = useState<Record<string, string>>({});
-  const [languageEnum, setLanguageEnum] = useState<Record<string, { text: string }>>({});
+// ─── 移动端卡片 ────────────────────────────────────────────────────────────
+
+function BoardCard({
+  row,
+  categoryNameMap,
+}: {
+  row: BoardRow;
+  categoryNameMap: Record<string, string>;
+}) {
+  return (
+    <List.Item style={{ padding: 0, borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ padding: '10px 4px', width: '100%' }}>
+        <Flex align="center" gap={6} wrap>
+          {row.rank != null && (
+            <Typography.Text strong style={{ color: row.rank <= 3 ? '#fa8c16' : undefined }}>
+              #{row.rank}
+            </Typography.Text>
+          )}
+          <Link href={{ pathname: '/repo', query: { full: row.full_name } }}>
+            <Typography.Text
+              strong
+              style={row.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}
+            >
+              {row.full_name}
+            </Typography.Text>
+          </Link>
+          <ArchivedTag row={row} />
+        </Flex>
+        {row.description && (
+          <Typography.Text
+            type="secondary"
+            style={{ display: 'block', fontSize: 12, marginTop: 2, lineHeight: 1.4 }}
+          >
+            {row.description}
+          </Typography.Text>
+        )}
+        <Flex align="center" gap={4} wrap style={{ marginTop: 6 }}>
+          {row.primary_language && <Tag>{row.primary_language}</Tag>}
+          {(() => {
+            const name = row.category_name || categoryNameMap[row.category ?? ''] || row.category;
+            return name ? <Tag color="blue">{name}</Tag> : null;
+          })()}
+          <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
+        </Flex>
+        <Flex align="center" justify="space-between" style={{ marginTop: 6 }}>
+          <Typography.Text style={{ color: '#faad14', fontSize: 13 }}>
+            ⭐ {row.stars.toLocaleString()}
+          </Typography.Text>
+          {row.priority_score != null && <ScoreBar score={row.priority_score} />}
+        </Flex>
+      </div>
+    </List.Item>
+  );
+}
+
+function MobileBoard({
+  excludeAdapted,
+  setExcludeAdapted,
+  excludeArchived,
+  setExcludeArchived,
+  categoryEnum,
+  categoryNameMap,
+  languageEnum,
+}: {
+  excludeAdapted: boolean;
+  setExcludeAdapted: (v: boolean) => void;
+  excludeArchived: boolean;
+  setExcludeArchived: (v: boolean) => void;
+  categoryEnum: Record<string, { text: string }>;
+  categoryNameMap: Record<string, string>;
+  languageEnum: Record<string, { text: string }>;
+}) {
+  const [data, setData] = useState<BoardRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [keyword, setKeyword] = useState('');
+  const [category, setCategory] = useState<string | undefined>();
+  const [effectiveState, setEffectiveState] = useState<HarmonyState | undefined>();
+  const [language, setLanguage] = useState<string | undefined>();
+  const pageSize = 20;
 
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-    loadCategoryTree().then((tree) => {
-      const tops = getTopCategories(tree);
-      const enumMap: Record<string, { text: string }> = {};
-      const nameMap: Record<string, string> = {};
-      for (const c of tops) {
-        enumMap[c.slug] = { text: c.name_cn };
-        nameMap[c.slug] = c.name_cn;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const { data, total } = await fetchBoard({
+          page,
+          pageSize,
+          orderBy: 'rank',
+          orderAsc: true,
+          filters: {
+            keyword: keyword || undefined,
+            category,
+            effectiveState,
+            language,
+            excludeAdapted,
+            excludeArchived,
+          },
+        });
+        if (!cancelled) {
+          setData(data);
+          setTotal(total);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setCategoryEnum(enumMap);
-      setCategoryNameMap(nameMap);
-    }).catch(console.error);
-    fetchLanguages().then((langs) => {
-      const langMap: Record<string, { text: string }> = {};
-      for (const l of langs) langMap[l] = { text: l };
-      setLanguageEnum(langMap);
-    }).catch(console.error);
-  }, []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page, keyword, category, effectiveState, language, excludeAdapted, excludeArchived]);
 
-  if (!isSupabaseConfigured()) return <NotConfigured />;
+  return (
+    <Spin spinning={loading}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Input.Search
+          placeholder="搜索项目名"
+          allowClear
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value);
+            setPage(1);
+          }}
+        />
+        <Flex gap={8} wrap>
+          <Select
+            placeholder="分类"
+            allowClear
+            style={{ flex: 1, minWidth: 120 }}
+            value={category}
+            onChange={(v) => {
+              setCategory(v);
+              setPage(1);
+            }}
+            options={Object.entries(categoryEnum).map(([k, v]) => ({ label: v.text, value: k }))}
+          />
+          <Select
+            placeholder="鸿蒙状态"
+            allowClear
+            style={{ flex: 1, minWidth: 120 }}
+            value={effectiveState}
+            onChange={(v) => {
+              setEffectiveState(v);
+              setPage(1);
+            }}
+            options={HARMONY_STATES.map((s) => ({ label: HARMONY_STATE_LABELS[s], value: s }))}
+          />
+          <Select
+            placeholder="语言"
+            allowClear
+            style={{ flex: 1, minWidth: 120 }}
+            value={language}
+            onChange={(v) => {
+              setLanguage(v);
+              setPage(1);
+            }}
+            options={Object.entries(languageEnum).map(([k, v]) => ({ label: v.text, value: k }))}
+          />
+        </Flex>
+        <Flex align="center" gap={8} wrap>
+          <Flex align="center" gap={4}>
+            <Switch
+              size="small"
+              checked={excludeArchived}
+              onChange={setExcludeArchived}
+            />
+            <Typography.Text style={{ fontSize: 12 }}>排除归档</Typography.Text>
+          </Flex>
+          <Flex align="center" gap={4}>
+            <Switch
+              size="small"
+              checked={excludeAdapted}
+              onChange={setExcludeAdapted}
+            />
+            <Typography.Text style={{ fontSize: 12 }}>排除已鸿蒙</Typography.Text>
+          </Flex>
+        </Flex>
+        <List
+          dataSource={data}
+          locale={{ emptyText: '无数据' }}
+          renderItem={(row) => (
+            <BoardCard row={row} categoryNameMap={categoryNameMap} />
+          )}
+        />
+        <Pagination
+          current={page}
+          total={total}
+          pageSize={pageSize}
+          onChange={(p) => setPage(p)}
+          size="small"
+          showSizeChanger={false}
+          style={{ textAlign: 'center' }}
+        />
+      </Space>
+    </Spin>
+  );
+}
+
+// ─── 桌面端表格 ──────────────────────────────────────────────────────────────
+
+function DesktopBoard({
+  excludeAdapted,
+  setExcludeAdapted,
+  excludeArchived,
+  setExcludeArchived,
+  categoryEnum,
+  categoryNameMap,
+  languageEnum,
+}: {
+  excludeAdapted: boolean;
+  setExcludeAdapted: (v: boolean) => void;
+  excludeArchived: boolean;
+  setExcludeArchived: (v: boolean) => void;
+  categoryEnum: Record<string, { text: string }>;
+  categoryNameMap: Record<string, string>;
+  languageEnum: Record<string, { text: string }>;
+}) {
+  const actionRef = useRef<ActionType>();
 
   const columns: ProColumns<BoardRow>[] = [
     {
@@ -164,7 +369,6 @@ export default function BoardPage() {
       pagination={{ defaultPageSize: 20, showSizeChanger: true }}
       request={async (params, sort) => {
         try {
-          // 从 ProTable sort 参数中提取排序字段
           const sortField = sort ? Object.keys(sort)[0] : undefined;
           const sortDir = sortField ? sort[sortField] : undefined;
           const orderBy = sortField ?? 'rank';
@@ -190,6 +394,63 @@ export default function BoardPage() {
           return { data: [], success: false, total: 0 };
         }
       }}
+    />
+  );
+}
+
+export default function BoardPage() {
+  const isMobile = useIsMobile();
+  const [excludeAdapted, setExcludeAdapted] = useState(true);
+  const [excludeArchived, setExcludeArchived] = useState(true);
+  const [categoryEnum, setCategoryEnum] = useState<Record<string, { text: string }>>({});
+  const [categoryNameMap, setCategoryNameMap] = useState<Record<string, string>>({});
+  const [languageEnum, setLanguageEnum] = useState<Record<string, { text: string }>>({});
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    loadCategoryTree().then((tree) => {
+      const tops = getTopCategories(tree);
+      const enumMap: Record<string, { text: string }> = {};
+      const nameMap: Record<string, string> = {};
+      for (const c of tops) {
+        enumMap[c.slug] = { text: c.name_cn };
+        nameMap[c.slug] = c.name_cn;
+      }
+      setCategoryEnum(enumMap);
+      setCategoryNameMap(nameMap);
+    }).catch(console.error);
+    fetchLanguages().then((langs) => {
+      const langMap: Record<string, { text: string }> = {};
+      for (const l of langs) langMap[l] = { text: l };
+      setLanguageEnum(langMap);
+    }).catch(console.error);
+  }, []);
+
+  if (!isSupabaseConfigured()) return <NotConfigured />;
+
+  if (isMobile) {
+    return (
+      <MobileBoard
+        excludeAdapted={excludeAdapted}
+        setExcludeAdapted={setExcludeAdapted}
+        excludeArchived={excludeArchived}
+        setExcludeArchived={setExcludeArchived}
+        categoryEnum={categoryEnum}
+        categoryNameMap={categoryNameMap}
+        languageEnum={languageEnum}
+      />
+    );
+  }
+
+  return (
+    <DesktopBoard
+      excludeAdapted={excludeAdapted}
+      setExcludeAdapted={setExcludeAdapted}
+      excludeArchived={excludeArchived}
+      setExcludeArchived={setExcludeArchived}
+      categoryEnum={categoryEnum}
+      categoryNameMap={categoryNameMap}
+      languageEnum={languageEnum}
     />
   );
 }

@@ -81,6 +81,8 @@ export function adaptedGate(state: HarmonyState | null | undefined): number {
       return 0.0;
     case 'PARTIAL':
       return 0.3;
+    case 'PENDING_ADAPTATION':
+      return 1.0;
     case 'NOT_ADAPTED':
       return 1.0;
     default:

@@ -109,8 +109,8 @@ function RepoDetail() {
         </Space>
       </Card>
 
-      <Row gutter={16}>
-        <Col span={12}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
           <Card title="鸿蒙化信号(辅助人工审核)" size="small">
             <Space size={6} wrap>
               <Tag color={row.ohpm_matched ? 'green' : 'default'}>
@@ -137,7 +137,7 @@ function RepoDetail() {
             ) : null}
           </Card>
         </Col>
-        <Col span={12}>
+        <Col xs={24} md={12}>
           <Card title="适配优先级构成" size="small">
             {b ? (
               <Descriptions column={1} size="small">
@@ -166,7 +166,7 @@ function RepoDetail() {
       <Card title="LLM 适配评估" size="small">
         {row.analysis_tier ? (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Descriptions column={2} size="small">
+            <Descriptions column={{ xs: 1, sm: 1, md: 2 }} size="small">
               <Descriptions.Item label="推荐路径">
                 {row.recommended_approach ?? '-'}
               </Descriptions.Item>

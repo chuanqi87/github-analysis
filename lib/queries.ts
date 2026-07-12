@@ -179,6 +179,7 @@ export interface TrendingRow {
   effective_state: HarmonyState | null;
   category_name: string | null;
   priority_score: number | null;
+  weeks_on_trending: number;
 }
 
 export async function fetchLatestTrendingDate(): Promise<string | null> {

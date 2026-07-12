@@ -6,14 +6,17 @@ import {
   Button,
   Card,
   Descriptions,
+  Flex,
   Form,
   Input,
-  InputNumber,
+  List,
   Modal,
+  Pagination,
   Radio,
   Segmented,
   Select,
   Space,
+  Spin,
   Statistic,
   Switch,
   Table,
@@ -48,10 +51,12 @@ import {
   triggerGitHubWorkflow,
   upsertOverride,
   type BoardRow,
+  type BoardFilters,
   type RepoStats,
   type PipelineRun,
 } from '@/lib/queries';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import NotConfigured from '@/components/NotConfigured';
 
@@ -85,6 +90,175 @@ function ArchivedTag({ row }: { row: BoardRow }) {
     <Tooltip title={reason}>
       <Tag color="default">📦 归档</Tag>
     </Tooltip>
+  );
+}
+
+// ─── 移动端卡片列表 ──────────────────────────────────────────────────────────
+
+function AdminCard({
+  row,
+  onMark,
+}: {
+  row: BoardRow;
+  onMark: (r: BoardRow) => void;
+}) {
+  return (
+    <List.Item style={{ padding: 0, borderBottom: '1px solid #f0f0f0' }}>
+      <div style={{ padding: '10px 4px', width: '100%' }}>
+        <Space align="center" size={4} wrap>
+          <Link href={{ pathname: '/repo', query: { full: row.full_name } }}>
+            <Typography.Text
+              strong
+              style={row.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}
+            >
+              {row.full_name}
+            </Typography.Text>
+          </Link>
+          <ArchivedTag row={row} />
+        </Space>
+        {row.description && (
+          <Typography.Text
+            type="secondary"
+            style={{ display: 'block', fontSize: 12, marginTop: 2, lineHeight: 1.4 }}
+          >
+            {row.description}
+          </Typography.Text>
+        )}
+        <Space size={4} wrap style={{ marginTop: 6 }}>
+          {row.is_archived ? (
+            <Tag color="default">📦 归档</Tag>
+          ) : row.analysis_tier != null ? (
+            <Tag color="green">已分析</Tag>
+          ) : (
+            <Tag color="default">待分析</Tag>
+          )}
+          <Typography.Text style={{ color: '#faad14', fontSize: 13 }}>
+            ⭐ {row.stars?.toLocaleString() ?? '-'}
+          </Typography.Text>
+          {row.primary_language && <Tag>{row.primary_language}</Tag>}
+          {(() => {
+            const name = row.category_name || row.category;
+            return name ? <Tag color="blue">{name}</Tag> : null;
+          })()}
+        </Space>
+        <div style={{ marginTop: 6 }}>
+          <SignalTags r={row} />
+        </div>
+        <Flex align="center" justify="space-between" style={{ marginTop: 8 }}>
+          <Space size={6} wrap>
+            {row.harmony_suggestion && <HarmonyBadge state={row.harmony_suggestion} />}
+            {row.override_state ? (
+              <HarmonyBadge state={row.override_state} reviewed />
+            ) : (
+              <Tag>待审核</Tag>
+            )}
+            {row.source_repo_url && (
+              <a href={row.source_repo_url} target="_blank" rel="noreferrer">
+                适配仓
+              </a>
+            )}
+          </Space>
+          <Button type="primary" size="small" onClick={() => onMark(row)}>
+            标记
+          </Button>
+        </Flex>
+      </div>
+    </List.Item>
+  );
+}
+
+function MobileAdminList({
+  analysisFilter,
+  setAnalysisFilter,
+  openMark,
+  reloadKey,
+}: {
+  analysisFilter: AnalysisFilter;
+  setAnalysisFilter: (v: AnalysisFilter) => void;
+  openMark: (r: BoardRow) => void;
+  reloadKey: number;
+}) {
+  const [data, setData] = useState<BoardRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [keyword, setKeyword] = useState('');
+  const pageSize = 20;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const filters: BoardFilters = { keyword: keyword || undefined };
+        if (analysisFilter === 'analyzed') filters.analysisStatus = 'analyzed';
+        else if (analysisFilter === 'unanalyzed') filters.analysisStatus = 'unanalyzed';
+        else if (analysisFilter === 'archived') filters.archived = true;
+
+        const { data, total } = await fetchBoard({
+          page,
+          pageSize,
+          orderBy: 'stars',
+          orderAsc: false,
+          filters,
+        });
+        if (!cancelled) {
+          setData(data);
+          setTotal(total);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page, keyword, analysisFilter, reloadKey]);
+
+  return (
+    <Spin spinning={loading}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Input.Search
+          placeholder="搜索项目名"
+          allowClear
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value);
+            setPage(1);
+          }}
+        />
+        <Segmented
+          block
+          value={analysisFilter}
+          onChange={(v) => {
+            setAnalysisFilter(v as AnalysisFilter);
+            setPage(1);
+          }}
+          options={[
+            { label: '全部', value: 'all' },
+            { label: '已分析', value: 'analyzed' },
+            { label: '待分析', value: 'unanalyzed' },
+            { label: '归档', value: 'archived' },
+          ]}
+        />
+        <List
+          dataSource={data}
+          locale={{ emptyText: '无数据' }}
+          renderItem={(row) => <AdminCard row={row} onMark={openMark} />}
+        />
+        <Pagination
+          current={page}
+          total={total}
+          pageSize={pageSize}
+          onChange={setPage}
+          size="small"
+          showSizeChanger={false}
+          style={{ textAlign: 'center' }}
+        />
+      </Space>
+    </Spin>
   );
 }
 
@@ -341,6 +515,7 @@ function PipelineCard() {
           loading={loadingRuns}
           pagination={false}
           size="small"
+          scroll={{ x: 600 }}
         />
       </Card>
     </Card>
@@ -352,13 +527,13 @@ function StatsCards({ stats }: { stats: RepoStats | null }) {
   const analyzedPct = stats.total > 0 ? ((stats.analyzed / stats.total) * 100).toFixed(1) : '0';
   const archivedPct = stats.total > 0 ? ((stats.archived / stats.total) * 100).toFixed(1) : '0';
   return (
-    <Row gutter={16} style={{ marginBottom: 16 }}>
-      <Col span={6}>
+    <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+      <Col xs={12} md={6}>
         <Card>
           <Statistic title="仓库总数" value={stats.total} />
         </Card>
       </Col>
-      <Col span={6}>
+      <Col xs={12} md={6}>
         <Card>
           <Statistic
             title="已分析"
@@ -368,7 +543,7 @@ function StatsCards({ stats }: { stats: RepoStats | null }) {
           />
         </Card>
       </Col>
-      <Col span={6}>
+      <Col xs={12} md={6}>
         <Card>
           <Statistic
             title="待分析"
@@ -377,7 +552,7 @@ function StatsCards({ stats }: { stats: RepoStats | null }) {
           />
         </Card>
       </Col>
-      <Col span={6}>
+      <Col xs={12} md={6}>
         <Card>
           <Statistic
             title="已归档(无需分析)"
@@ -393,12 +568,14 @@ function StatsCards({ stats }: { stats: RepoStats | null }) {
 
 export default function AdminPage() {
   const actionRef = useRef<ActionType>();
+  const isMobile = useIsMobile();
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [editing, setEditing] = useState<BoardRow | null>(null);
   const [form] = Form.useForm();
   const [analysisFilter, setAnalysisFilter] = useState<AnalysisFilter>('all');
   const [stats, setStats] = useState<RepoStats | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -449,6 +626,7 @@ export default function AdminPage() {
       message.success(`已标记 ${editing.full_name}`);
       setEditing(null);
       actionRef.current?.reload();
+      setReloadKey((k) => k + 1);
       fetchRepoStats().then(setStats).catch(console.error);
     } catch (e) {
       message.error(`保存失败(可能无写入权限):${(e as Error).message}`);
@@ -563,20 +741,30 @@ export default function AdminPage() {
 
   return (
     <>
-      <Space style={{ marginBottom: 12 }}>
-        <Typography.Text>当前:{email}</Typography.Text>
+      <Flex align="center" justify="space-between" wrap gap={8} style={{ marginBottom: 12 }}>
+        <Typography.Text ellipsis style={{ minWidth: 0, flex: 1 }}>
+          当前:{email}
+        </Typography.Text>
         {adminEmail && email !== adminEmail && (
-          <Alert type="warning" showIcon message="当前账户与配置的管理员邮箱不一致" banner />
+          <Alert type="warning" showIcon message="账户与配置邮箱不一致" banner />
         )}
         <Button size="small" onClick={() => getSupabase().auth.signOut()}>
           退出
         </Button>
-      </Space>
+      </Flex>
 
       <StatsCards stats={stats} />
 
       <PipelineCard />
 
+      {isMobile ? (
+        <MobileAdminList
+          analysisFilter={analysisFilter}
+          setAnalysisFilter={setAnalysisFilter}
+          openMark={openMark}
+          reloadKey={reloadKey}
+        />
+      ) : (
       <ProTable<BoardRow>
         headerTitle="仓库管理"
         rowKey="id"
@@ -604,14 +792,12 @@ export default function AdminPage() {
         pagination={{ defaultPageSize: 20, showSizeChanger: true, showQuickJumper: true }}
         request={async (params, sort) => {
           try {
-            // 从 ProTable sort 参数中提取排序字段
             const sortField = sort ? Object.keys(sort)[0] : undefined;
             const sortDir = sort ? sort[sortField!] : undefined;
             const orderBy = sortField ?? 'stars';
             const orderAsc = sortDir === 'ascend';
 
-            // 构建过滤器
-            const filters: Record<string, any> = { keyword: params.keyword };
+            const filters: BoardFilters = { keyword: params.keyword };
             if (analysisFilter === 'analyzed') {
               filters.analysisStatus = 'analyzed';
             } else if (analysisFilter === 'unanalyzed') {
@@ -634,6 +820,7 @@ export default function AdminPage() {
           }
         }}
       />
+      )}
 
       <Modal
         open={!!editing}
@@ -642,6 +829,8 @@ export default function AdminPage() {
         onOk={saveMark}
         okText="保存"
         cancelText="取消"
+        width={isMobile ? '90%' : 520}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         {editing?.is_archived && (
           <Alert

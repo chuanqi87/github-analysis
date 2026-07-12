@@ -1,4 +1,4 @@
-// 每日热点:抓取 trending → 跨源去重 + 热度排名 Top-N → 落库快照 → 补齐新仓 → 对热点仓做增量鸿蒙分析。
+// 每周热点:抓取 trending → 跨源去重 + 热度排名 Top-N → 落库快照 → 补齐新仓 → 对热点仓做增量鸿蒙分析。
 import 'dotenv/config';
 import { fetchTrending } from '@/lib/sources/ossinsight';
 import { fetchGithubTrending } from '@/lib/sources/githubTrending';
@@ -10,7 +10,7 @@ import { runHarmonySignals } from '@/scripts/03-harmony-signals';
 import { runLlmClassify } from '@/scripts/05-llm-classify';
 import { runScore } from '@/scripts/07-score';
 
-/** 每日热点保留条数 */
+/** 每周热点保留条数 */
 const TOP_N = 10;
 
 interface SnapshotSeed {
@@ -24,10 +24,53 @@ interface SnapshotSeed {
   rank: number | null;
 }
 
+/**
+ * 获取本周一的日期(ISO 周)
+ */
+function getMonday(): string {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // 调整周日为 -6
+  const monday = new Date(now.setDate(diff));
+  return monday.toISOString().slice(0, 10);
+}
+
+/**
+ * 查询仓库的历史上榜周数
+ * 通过统计 distinct DATE_TRUNC('week', captured_date) 来计算
+ */
+async function getWeeksOnTrending(repoNames: string[]): Promise<Map<string, number>> {
+  const client = getAdminClient();
+  const weekMap = new Map<string, number>();
+  
+  if (repoNames.length === 0) return weekMap;
+
+  // 分批查询(每批最多 500 个)
+  for (let i = 0; i < repoNames.length; i += 500) {
+    const chunk = repoNames.slice(i, i + 500);
+    const { data, error } = await client.rpc('count_trending_weeks', {
+      p_repo_names: chunk,
+    });
+    
+    if (error) {
+      log(`查询上榜周数失败: ${error.message}`);
+      continue;
+    }
+    
+    if (data) {
+      for (const row of data as { repo_name: string; week_count: number }[]) {
+        weekMap.set(row.repo_name, row.week_count);
+      }
+    }
+  }
+  
+  return weekMap;
+}
+
 async function collectSeeds(): Promise<SnapshotSeed[]> {
   const seeds: SnapshotSeed[] = [];
   try {
-    const oss = await fetchTrending('past_24_hours');
+    const oss = await fetchTrending('past_week');
     for (const it of oss) {
       seeds.push({
         source: 'ossinsight',
@@ -45,7 +88,7 @@ async function collectSeeds(): Promise<SnapshotSeed[]> {
     log(`OSS Insight 抓取失败:${String(e).slice(0, 120)}`);
   }
   try {
-    const gh = await fetchGithubTrending('daily');
+    const gh = await fetchGithubTrending('weekly');
     for (const it of gh) {
       seeds.push({
         source: 'github-trending',
@@ -133,8 +176,8 @@ function deduplicateAndTopN(seeds: SnapshotSeed[], topN = TOP_N): SnapshotSeed[]
   }));
 }
 
-export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
-  const runId = await startRun('daily-trending');
+export async function runWeeklyTrending(_opts: StageOpts = {}): Promise<void> {
+  const runId = await startRun('weekly-trending');
   try {
     const client = getAdminClient();
     const rawSeeds = await collectSeeds();
@@ -149,6 +192,10 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
     log(`去重后 ${seeds.length} 条(Top ${TOP_N},原始 ${rawSeeds.length} 条)`);
 
     const names = Array.from(new Set(seeds.map((s) => s.repo_name)));
+
+    // 查询历史上榜周数
+    const weekMap = await getWeeksOnTrending(names);
+    log(`查询到 ${weekMap.size} 个仓库的历史上榜周数`);
 
     // 已在库的仓
     const nameToId = new Map<string, number>();
@@ -204,7 +251,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
     }
 
     // 落库快照(带 repository_id,去重后每条 repo 只写一行)
-    const date = today();
+    const date = getMonday(); // 使用本周一作为 captured_date
     const snapRows = seeds.map((s) => ({
       captured_date: date,
       source: s.source,
@@ -216,6 +263,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
       forks: s.forks,
       total_score: s.total_score,
       rank: s.rank,
+      weeks_on_trending: (weekMap.get(s.repo_name) ?? 0) + 1, // 历史周数 + 本次
     }));
     // 注意:去重后 unique 约束是 (captured_date, repo_name)
     await upsertBatched('trending_snapshots', snapRows, { onConflict: 'captured_date,repo_name' });
@@ -234,7 +282,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
       snapshots: snapRows.length,
       analyzed: ids.length,
     });
-    log(`daily-trending 完成:原始 ${rawSeeds.length} → 去重 Top${TOP_N} ${snapRows.length}、分析 ${ids.length}`);
+    log(`weekly-trending 完成:原始 ${rawSeeds.length} → 去重 Top${TOP_N} ${snapRows.length}、分析 ${ids.length}`);
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });
     throw err;
@@ -242,7 +290,7 @@ export async function runDailyTrending(_opts: StageOpts = {}): Promise<void> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runDailyTrending().catch((e) => {
+  runWeeklyTrending().catch((e) => {
     console.error(e);
     process.exit(1);
   });

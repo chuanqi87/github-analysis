@@ -50,6 +50,7 @@ export default function CategoriesPage() {
           rowKey="category"
           dataSource={rows}
           pagination={false}
+          scroll={{ x: 600 }}
           columns={[
             {
               title: '分类',

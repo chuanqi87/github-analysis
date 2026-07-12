@@ -1,7 +1,7 @@
 // 管道编排器:pnpm pipeline --stage=<stage> [--limit=N] [--ids=1,2] [--force]
 //
 // stages: fetch-top | enrich | harmony-signals | fetch-readme | llm-classify
-//         | llm-evaluate | score | daily-trending | build-registry | mark-archived | all
+//         | llm-evaluate | score | weekly-trending | build-registry | mark-archived | all
 import 'dotenv/config';
 import { parseArgs, log, type StageOpts } from '@/scripts/_common';
 import { runFetchTop } from '@/scripts/01-fetch-top';
@@ -12,7 +12,7 @@ import { runLlmClassify } from '@/scripts/05-llm-classify';
 import { runLlmEvaluate } from '@/scripts/06-llm-evaluate';
 import { runScore } from '@/scripts/07-score';
 import { runMarkArchived } from '@/scripts/08-mark-archived';
-import { runDailyTrending } from '@/scripts/daily-trending';
+import { runWeeklyTrending } from '@/scripts/weekly-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
 
 const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
@@ -23,7 +23,7 @@ const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'llm-classify': runLlmClassify,
   'llm-evaluate': runLlmEvaluate,
   score: runScore,
-  'daily-trending': runDailyTrending,
+  'weekly-trending': runWeeklyTrending,
   'build-registry': () => runBuildRegistry(),
   'mark-archived': runMarkArchived,
 };

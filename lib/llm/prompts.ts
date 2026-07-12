@@ -4,7 +4,7 @@ import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 import { formatCategoryList } from '@/lib/category/loader';
 
-export const PROMPT_VERSION = 'p3';
+export const PROMPT_VERSION = 'p4';
 
 export function systemPrompt(tier: 1 | 2, categoryTree: CategoryTreeNode[]): string {
   const categoryList = formatCategoryList(categoryTree);
@@ -56,13 +56,14 @@ ${categoryList}
 基于以下事实信号判定:
 - **ADAPTED**: 已在 ohpm 上架 **或** 有明确的鸿蒙化代码仓(GitCode/Gitee上的鸿蒙适配版)
 - **PARTIAL**: 有鸿蒙工程文件但未上架,或有社区正在适配的迹象
-- **NOT_ADAPTED**: 目前无鸿蒙痕迹,但有生态贡献潜力(这是大多数情况,不是贬义!)
+- **PENDING_ADAPTATION**: 分析后确认需要鸿蒙化适配,但目前尚未适配。这是大多数有生态贡献潜力的项目应输出的状态(非贬义!)
+- **NOT_ADAPTED**: 仅作为信号检测的默认值,表示尚未经分析确认。LLM 分析后一般不应输出此值,改用 PENDING_ADAPTATION
 - **NOT_APPLICABLE**: 极少使用!仅用于以下极端情况:
   - 纯社会倡议/政治运动(非技术项目)
   - 与操作系统深度绑定且明确不适配其他平台的专有工具(如 Windows 激活脚本)
   - 项目已废弃且无任何参考价值
 
-**重要**: 不要因为项目是纯文档/学习资源就标记为 NOT_APPLICABLE!学习资源对鸿蒙生态建设至关重要,应标记为 NOT_ADAPTED 并说明贡献方式。
+**重要**: 不要因为项目是纯文档/学习资源就标记为 NOT_APPLICABLE!学习资源对鸿蒙生态建设至关重要,应标记为 PENDING_ADAPTATION 并说明贡献方式。
 
 ## 评分口径
 - **mobile_relevance → ecosystem_relevance**: 对鸿蒙生态的整体价值(不仅限于移动端),学习资源、工具链、文档都有高价值

@@ -10,6 +10,7 @@ import NotConfigured from '@/components/NotConfigured';
 const COLORS: Record<HarmonyState, string> = {
   ADAPTED: '#52c41a',
   PARTIAL: '#faad14',
+  PENDING_ADAPTATION: '#fa8c16',
   NOT_ADAPTED: '#1677ff',
   NOT_APPLICABLE: '#bfbfbf',
 };
@@ -42,18 +43,18 @@ export default function HarmonyPage() {
 
   return (
     <Spin spinning={loading}>
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={12} md={6}>
           <Card>
             <Statistic title="项目总数" value={total} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card>
             <Statistic title="已鸿蒙化" value={adapted} suffix={`/ ${total}`} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card>
             <Statistic
               title="鸿蒙化率"
@@ -62,15 +63,15 @@ export default function HarmonyPage() {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={6}>
           <Card>
             <Statistic title="已人工审核" value={reviewed} suffix={`/ ${total}`} />
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={16}>
-        <Col span={12}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
           <Card title="鸿蒙化状态分布">
             <div style={{ width: '100%', height: 320 }}>
               <ResponsiveContainer>
@@ -87,7 +88,7 @@ export default function HarmonyPage() {
             </div>
           </Card>
         </Col>
-        <Col span={12}>
+        <Col xs={24} md={12}>
           <Card title="明细">
             <Table<HarmonyStat>
               rowKey="effective_state"
