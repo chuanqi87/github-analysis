@@ -12,14 +12,38 @@ interface RepoRef {
   name: string;
 }
 
+// PostgREST 单次查询硬上限 1000 行,全量刷新必须 range 分页。
+const PAGE_SIZE = 1000;
+
 async function loadRepos(opts: StageOpts): Promise<RepoRef[]> {
   const client = getAdminClient();
-  let q = client.from('repositories').select('id, full_name, owner, name').order('stars', { ascending: false });
-  if (opts.ids?.length) q = q.in('id', opts.ids);
-  if (opts.limit) q = q.limit(opts.limit);
-  const { data, error } = await q;
-  if (error) throw new Error(`加载 repositories 失败:${error.message}`);
-  return (data ?? []) as RepoRef[];
+  const selectStr = 'id, full_name, owner, name';
+  // ids 模式:候选集小(每日热点),单次查询即可
+  if (opts.ids?.length) {
+    const { data, error } = await client
+      .from('repositories')
+      .select(selectStr)
+      .in('id', opts.ids)
+      .order('stars', { ascending: false });
+    if (error) throw new Error(`加载 repositories 失败:${error.message}`);
+    return (data ?? []) as RepoRef[];
+  }
+  // 全量模式:range 分页,绕过 PostgREST 1000 行上限
+  const out: RepoRef[] = [];
+  const cap = opts.limit ?? Number.MAX_SAFE_INTEGER;
+  for (let from = 0; out.length < cap; from += PAGE_SIZE) {
+    const take = Math.min(PAGE_SIZE, cap - out.length);
+    const { data, error } = await client
+      .from('repositories')
+      .select(selectStr)
+      .order('stars', { ascending: false })
+      .range(from, from + take - 1);
+    if (error) throw new Error(`加载 repositories 失败:${error.message}`);
+    const rows = (data ?? []) as RepoRef[];
+    out.push(...rows);
+    if (rows.length < take) break; // 已取尽
+  }
+  return out;
 }
 
 export async function runEnrich(opts: StageOpts = {}): Promise<void> {

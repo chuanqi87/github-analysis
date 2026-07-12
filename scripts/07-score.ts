@@ -108,14 +108,17 @@ export async function runScore(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('score');
   try {
     const client = getAdminClient();
-    let repoQ = client
-      .from('repositories')
-      .select('id, stars, is_archived')
-      .order('stars', { ascending: false });
-    if (opts.ids?.length) repoQ = repoQ.in('id', opts.ids);
-    const { data: repoData, error } = await repoQ;
-    if (error) throw new Error(`加载 repositories 失败:${error.message}`);
-    const allRepos = (repoData ?? []) as { id: number; stars: number; is_archived: boolean }[];
+    // range 分页加载全部仓库(绕过 PostgREST 单次 1000 行上限);ids 模式小集合同样安全
+    const allRepos = await pageAll<{ id: number; stars: number; is_archived: boolean }>((from, to) => {
+      let q = client
+        .from('repositories')
+        .select('id, stars, is_archived')
+        .order('stars', { ascending: false })
+        .range(from, to);
+      if (opts.ids?.length) q = q.in('id', opts.ids);
+      return q as unknown as PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    });
+    if (!allRepos.length) throw new Error('加载 repositories 失败:无数据');
 
     // 过滤已归档仓库
     const repos = allRepos.filter((r) => !r.is_archived);

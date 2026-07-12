@@ -14,6 +14,8 @@ where a.captured_date = b.captured_date
 alter table trending_snapshots drop constraint if exists trending_snapshots_captured_date_source_repo_name_key;
 
 -- 3. 建立新唯一约束(去掉 source 列,因为去重后每个 repo 每天只有一条)
+--    先删后建保证幂等(ADD CONSTRAINT 不支持 IF NOT EXISTS;已存在时抛 42P07)
+alter table trending_snapshots drop constraint if exists trending_snapshots_captured_date_repo_name_key;
 alter table trending_snapshots add constraint trending_snapshots_captured_date_repo_name_key unique (captured_date, repo_name);
 
 -- 4. 列注释
