@@ -24,8 +24,6 @@ import HarmonyBadge from '@/components/HarmonyBadge';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
 
-const stateEnum = Object.fromEntries(HARMONY_STATES.map((s) => [s, { text: HARMONY_STATE_LABELS[s] }]));
-
 function ArchivedTag({ row }: { row: BoardRow }) {
   if (!row.is_archived) return null;
   const reason = row.archived_reason ? ARCHIVED_REASON_LABELS[row.archived_reason as keyof typeof ARCHIVED_REASON_LABELS] : '已归档';
@@ -243,46 +241,44 @@ function MobileBoard({
 // ─── 桌面端表格 ──────────────────────────────────────────────────────────────
 
 function DesktopBoard({
-  excludeAdapted,
-  setExcludeAdapted,
-  excludeArchived,
-  setExcludeArchived,
   categoryEnum,
   categoryNameMap,
   languageEnum,
 }: {
-  excludeAdapted: boolean;
-  setExcludeAdapted: (v: boolean) => void;
-  excludeArchived: boolean;
-  setExcludeArchived: (v: boolean) => void;
   categoryEnum: Record<string, { text: string }>;
   categoryNameMap: Record<string, string>;
   languageEnum: Record<string, { text: string }>;
 }) {
   const actionRef = useRef<ActionType>();
+  const keywordRef = useRef('');
+  const [keyword, setKeyword] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>();
+
+  const onKeywordChange = (v: string) => {
+    setKeyword(v);
+    keywordRef.current = v;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => actionRef.current?.reload(), 300);
+  };
 
   const columns: ProColumns<BoardRow>[] = [
     {
       title: '排名',
       dataIndex: 'rank',
       width: 70,
-      hideInSearch: true,
       sorter: true,
       render: (_, r) => r.rank ?? '-',
     },
     {
       title: '项目',
-      dataIndex: 'keyword',
+      dataIndex: 'full_name',
       render: (_, r) => (
         <Space direction="vertical" size={0}>
-          <Space align="center" size={4}>
-            <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
-              <Typography.Text strong style={r.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>
-                {r.full_name}
-              </Typography.Text>
-            </Link>
-            <ArchivedTag row={r} />
-          </Space>
+          <Link href={{ pathname: '/repo', query: { full: r.full_name } }}>
+            <Typography.Text strong style={r.is_archived ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>
+              {r.full_name}
+            </Typography.Text>
+          </Link>
           <Typography.Text type="secondary" ellipsis style={{ maxWidth: 420 }}>
             {r.description}
           </Typography.Text>
@@ -293,16 +289,18 @@ function DesktopBoard({
       title: '语言',
       dataIndex: 'primary_language',
       width: 110,
-      valueType: 'select',
-      valueEnum: languageEnum,
+      filters: Object.entries(languageEnum).map(([k, v]) => ({ text: v.text, value: k })),
+      filterSearch: true,
+      filterMultiple: false,
       render: (_, r) => (r.primary_language ? <Tag>{r.primary_language}</Tag> : '-'),
     },
     {
       title: '分类',
       dataIndex: 'category',
       width: 130,
-      valueType: 'select',
-      valueEnum: categoryEnum,
+      filters: Object.entries(categoryEnum).map(([k, v]) => ({ text: v.text, value: k })),
+      filterSearch: true,
+      filterMultiple: false,
       render: (_, r) => {
         const name = r.category_name || categoryNameMap[r.category ?? ''] || r.category;
         return name ? <Tag color="blue">{name}</Tag> : '-';
@@ -312,16 +310,28 @@ function DesktopBoard({
       title: '鸿蒙状态',
       dataIndex: 'effective_state',
       width: 120,
-      valueType: 'select',
-      valueEnum: stateEnum,
+      filters: HARMONY_STATES.map((s) => ({ text: HARMONY_STATE_LABELS[s], value: s })),
+      filterMultiple: false,
       render: (_, r) => <HarmonyBadge state={r.effective_state} reviewed={r.reviewed} />,
+    },
+    {
+      title: '归档',
+      dataIndex: 'is_archived',
+      width: 100,
+      filters: [
+        { text: '已归档', value: 'true' },
+        { text: '未归档', value: 'false' },
+      ],
+      filterMultiple: false,
+      render: (_, r) =>
+        r.is_archived ? <ArchivedTag row={r} /> : <span style={{ color: '#bfbfbf' }}>—</span>,
     },
     {
       title: 'Star',
       dataIndex: 'stars',
-      width: 90,
-      hideInSearch: true,
+      width: 100,
       sorter: true,
+      defaultSortOrder: 'descend',
       render: (_, r) => r.stars.toLocaleString(),
     },
     {
@@ -332,7 +342,6 @@ function DesktopBoard({
       ),
       dataIndex: 'priority_score',
       width: 160,
-      hideInSearch: true,
       sorter: true,
       render: (_, r) => <ScoreBar score={r.priority_score} />,
     },
@@ -345,47 +354,52 @@ function DesktopBoard({
       actionRef={actionRef}
       columns={columns}
       cardBordered
-      scroll={{ x: 1000 }}
+      scroll={{ x: 1100 }}
+      search={false}
       toolBarRender={() => [
-        <Space key="toggle">
-          <span>排除已归档</span>
-          <Switch
-            checked={excludeArchived}
-            onChange={(v) => {
-              setExcludeArchived(v);
-              actionRef.current?.reload();
-            }}
-          />
-          <span>排除已鸿蒙化</span>
-          <Switch
-            checked={excludeAdapted}
-            onChange={(v) => {
-              setExcludeAdapted(v);
-              actionRef.current?.reload();
-            }}
-          />
-        </Space>,
+        <Input.Search
+          key="keyword"
+          placeholder="搜索项目名"
+          allowClear
+          value={keyword}
+          onChange={(e) => onKeywordChange(e.target.value)}
+          onSearch={() => actionRef.current?.reload()}
+          style={{ width: 240 }}
+        />,
       ]}
-      pagination={{ defaultPageSize: 20, showSizeChanger: true }}
-      request={async (params, sort) => {
+      pagination={{
+        defaultPageSize: 100,
+        pageSizeOptions: [100, 200, 500, 1000],
+        showSizeChanger: true,
+        showTotal: (t) => `共 ${t.toLocaleString()} 条`,
+      }}
+      request={async (params, sort, filter) => {
         try {
-          const sortField = sort ? Object.keys(sort)[0] : undefined;
+          const sortField = sort && Object.keys(sort).length > 0 ? Object.keys(sort)[0] : undefined;
           const sortDir = sortField ? sort[sortField] : undefined;
-          const orderBy = sortField ?? 'rank';
+          const orderBy = sortField ?? 'stars';
           const orderAsc = sortDir === 'ascend';
+
+          const language = filter?.primary_language?.[0] as string | undefined;
+          const category = filter?.category?.[0] as string | undefined;
+          const effectiveState = filter?.effective_state?.[0] as HarmonyState | undefined;
+          const archVal = filter?.is_archived?.[0] as string | undefined;
+          const archived =
+            archVal === 'true' ? true
+            : archVal === 'false' ? false
+            : undefined;
 
           const { data, total } = await fetchBoard({
             page: params.current ?? 1,
-            pageSize: params.pageSize ?? 20,
+            pageSize: params.pageSize ?? 100,
             orderBy,
             orderAsc,
             filters: {
-              keyword: params.keyword,
-              category: params.category,
-              effectiveState: params.effective_state,
-              language: params.primary_language,
-              excludeAdapted,
-              excludeArchived,
+              keyword: keywordRef.current || undefined,
+              category,
+              effectiveState,
+              language,
+              archived,
             },
           });
           return { data, success: true, total };
@@ -444,10 +458,6 @@ export default function BoardPage() {
 
   return (
     <DesktopBoard
-      excludeAdapted={excludeAdapted}
-      setExcludeAdapted={setExcludeAdapted}
-      excludeArchived={excludeArchived}
-      setExcludeArchived={setExcludeArchived}
       categoryEnum={categoryEnum}
       categoryNameMap={categoryNameMap}
       languageEnum={languageEnum}
