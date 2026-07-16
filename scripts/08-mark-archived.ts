@@ -1,9 +1,10 @@
 // 阶段8:全量刷新归档标记。
 // 1) GitHub GraphQL 批量查询 isArchived → github_archived
 // 2) 已有 README 的仓库做关键词检测 → readme_archived / deprecated_notice
-// 3) 最后 Release 距今 > 3 年 → no_recent_release
-// 4) 超过 2 年未更新的仓库 → stale_repository
-// 5) 归档仓库不再参与 LLM 分析,priority_score 自动沉底。
+// 3) 最近一次 commit(pushed_at)距今 > 3 年 → stale_repository
+//    说明:不再使用「最后 Release 超过 3 年」判断,因为很多项目不发布版本
+//    却仍在持续 commit,按 release 判断会误归档。统一以 commit 活跃度为准。
+// 4) 归档仓库不再参与 LLM 分析,priority_score 自动沉底。
 import 'dotenv/config';
 import { batchEnrich } from '@/lib/github/graphql';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
@@ -23,11 +24,8 @@ interface RepoRow {
   latest_release_at: string | null;
 }
 
-/** 超过此年限未发布新版本视为 no_recent_release(3 年) */
-const NO_RELEASE_THRESHOLD_MS = 3 * 365.25 * 24 * 60 * 60 * 1000;
-
-/** 超过此年限未更新视为 stale(2 年) */
-const STALE_THRESHOLD_MS = 2 * 365.25 * 24 * 60 * 60 * 1000;
+/** 超过此年限未更新(最近一次 commit)视为 stale(3 年) */
+const STALE_THRESHOLD_MS = 3 * 365.25 * 24 * 60 * 60 * 1000;
 
 async function loadAllRepos(): Promise<RepoRow[]> {
   const client = getAdminClient();
@@ -71,12 +69,11 @@ export async function runMarkArchived(opts: StageOpts = {}): Promise<void> {
     }
 
     // ── Step 2: 合并所有检测结果 ─────────────────────────────────────
-    log('Step 2/3: 合并 GitHub + README + Release + Stale 检测结果...');
+    log('Step 2/3: 合并 GitHub + README + Stale 检测结果...');
     const counters = {
       github_archived: 0,
       readme_archived: 0,
       deprecated_notice: 0,
-      no_recent_release: 0,
       stale_repository: 0,
     };
     let unchanged = 0;
@@ -88,7 +85,7 @@ export async function runMarkArchived(opts: StageOpts = {}): Promise<void> {
       const latestRelease = releaseMap.get(repo.full_name) ?? repo.latest_release_at;
       const readmeStatus = detectReadmeStatus(repo.readme_text);
 
-      // 优先级: github_archived > readme_archived > deprecated_notice > no_recent_release > stale_repository
+      // 优先级: github_archived > readme_archived > deprecated_notice > stale_repository
       let newArchived = false;
       let newReason: string | null = null;
 
@@ -104,14 +101,8 @@ export async function runMarkArchived(opts: StageOpts = {}): Promise<void> {
         newArchived = true;
         newReason = 'deprecated_notice';
         counters.deprecated_notice++;
-      } else if (latestRelease) {
-        const releaseAgeMs = now - new Date(latestRelease).getTime();
-        if (releaseAgeMs > NO_RELEASE_THRESHOLD_MS) {
-          newArchived = true;
-          newReason = 'no_recent_release';
-          counters.no_recent_release++;
-        }
       } else if (repo.pushed_at) {
+        // 统一以最近一次 commit 时间判断是否 stale,不再依赖 release 发布情况
         const pushedAgeMs = now - new Date(repo.pushed_at).getTime();
         if (pushedAgeMs > STALE_THRESHOLD_MS) {
           newArchived = true;
@@ -155,8 +146,7 @@ export async function runMarkArchived(opts: StageOpts = {}): Promise<void> {
     log(
       `mark-archived 完成:共 ${total} 个归档` +
         `(GitHub ${counters.github_archived}, README归档 ${counters.readme_archived}, ` +
-        `弃用声明 ${counters.deprecated_notice}, 无新版本 ${counters.no_recent_release}, ` +
-        `Stale ${counters.stale_repository}), ` +
+        `弃用声明 ${counters.deprecated_notice}, Stale ${counters.stale_repository}), ` +
         `更新 ${updates.length} 条,未变化 ${unchanged} 条`,
     );
   } catch (err) {

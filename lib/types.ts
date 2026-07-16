@@ -69,14 +69,13 @@ export interface CategoryTree {
 
 // ---- 归档来源 ---------------------------------------------------------------
 
-export const ARCHIVED_REASONS = ['github_archived', 'readme_archived', 'deprecated_notice', 'no_recent_release', 'stale_repository'] as const;
+export const ARCHIVED_REASONS = ['github_archived', 'readme_archived', 'deprecated_notice', 'stale_repository'] as const;
 export type ArchivedReason = (typeof ARCHIVED_REASONS)[number];
 
 export const ARCHIVED_REASON_LABELS: Record<ArchivedReason, string> = {
   github_archived: 'GitHub 已归档',
   deprecated_notice: '官方声明弃用',
-  no_recent_release: '超过3年未发布新版本',
-  stale_repository: '超过2年未更新',
+  stale_repository: '超过3年未更新',
   readme_archived: 'README 声明归档',
 };
 
