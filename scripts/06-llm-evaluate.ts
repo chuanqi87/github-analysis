@@ -64,8 +64,9 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
     const signals = await loadSignalsMap(ids);
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
 
-    // 加载动态分类树
-    const categoryTree = await loadCategoryTree();
+    // 加载动态分类树(管道侧用 service_role,绕过 RLS)
+    const adminClient = getAdminClient();
+    const categoryTree = await loadCategoryTree(adminClient);
     log(`tier-2 深评 ${candidates.length} 个候选(百炼),${categoryTree.length} 个分类节点…`);
 
     let analyzed = 0;
@@ -95,7 +96,6 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
           const out = await evaluateRepo(analyzeRepo, sig, repo.readme_text, categoryTree);
 
           // 解析分类 slug → 数据库 ID,处理新分类提议
-          const adminClient = getAdminClient();
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);
           if (resolved.created_new) newCategories++;
 

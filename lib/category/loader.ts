@@ -1,8 +1,9 @@
 // ============================================================================
 // 动态分类加载器:从 categories 表读取二级分类树,提供缓存和辅助函数。
-// 前端(浏览器)和管道脚本(Node)共用。
+// 前端(浏览器)和管道脚本(Node)共用,故 Supabase 客户端一律由调用方注入:
+// 前端传 anon client,管道脚本传 service_role admin client。
 // ============================================================================
-import { getSupabase } from '@/lib/supabase/client';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { CategoryRow, CategoryTreeNode, CategoryTree } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -11,11 +12,10 @@ import type { CategoryRow, CategoryTreeNode, CategoryTree } from '@/lib/types';
 let _cache: { tree: CategoryTreeNode[]; ts: number } | null = null;
 const CACHE_TTL = 5 * 60 * 1000;
 
-export async function loadCategoryTree(): Promise<CategoryTreeNode[]> {
+export async function loadCategoryTree(client: SupabaseClient): Promise<CategoryTreeNode[]> {
   if (_cache && Date.now() - _cache.ts < CACHE_TTL) return _cache.tree;
 
-  const sb = getSupabase();
-  const { data, error } = await sb
+  const { data, error } = await client
     .from('v_category_tree')
     .select('*')
     .order('parent_sort_order', { ascending: true, nullsFirst: false })
@@ -104,7 +104,7 @@ export interface CreateCategoryInput {
  * 返回新创建的分类 ID。
  */
 export async function createCategory(
-  adminClient: ReturnType<typeof getSupabase>,
+  adminClient: SupabaseClient,
   input: CreateCategoryInput,
 ): Promise<number> {
   let parentId: number | null = null;
@@ -149,7 +149,7 @@ export async function createCategory(
  * 查找或创建子分类。如果 slug 已存在于指定父分类下,直接返回 id。
  */
 export async function findOrCreateSubcategory(
-  adminClient: ReturnType<typeof getSupabase>,
+  adminClient: SupabaseClient,
   parentSlug: string,
   subSlug: string,
   subNameCn: string,

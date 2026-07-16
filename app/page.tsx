@@ -18,7 +18,7 @@ import Link from 'next/link';
 import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS, type HarmonyState } from '@/lib/types';
 import { fetchBoard, fetchLanguages, type BoardRow } from '@/lib/queries';
 import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
-import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import ScoreBar from '@/components/ScoreBar';
@@ -408,7 +408,7 @@ export default function BoardPage() {
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
-    loadCategoryTree().then((tree) => {
+    loadCategoryTree(getSupabase()).then((tree) => {
       const tops = getTopCategories(tree);
       const enumMap: Record<string, { text: string }> = {};
       const nameMap: Record<string, string> = {};
