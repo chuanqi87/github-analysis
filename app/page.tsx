@@ -15,26 +15,16 @@ import {
   Flex,
 } from 'antd';
 import Link from 'next/link';
-import { HARMONY_STATE_LABELS, HARMONY_STATES, ARCHIVED_REASON_LABELS, type HarmonyState } from '@/lib/types';
+import { HARMONY_STATE_LABELS, HARMONY_STATES, type HarmonyState } from '@/lib/types';
 import { fetchBoard, fetchLanguages, type BoardRow } from '@/lib/queries';
 import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
+import { useBoardData } from '@/lib/hooks/use-board-data';
 import HarmonyBadge from '@/components/HarmonyBadge';
+import ArchivedTag from '@/components/ArchivedTag';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
-
-function ArchivedTag({ row }: { row: BoardRow }) {
-  if (!row.is_archived) return null;
-  const reason = row.archived_reason ? ARCHIVED_REASON_LABELS[row.archived_reason as keyof typeof ARCHIVED_REASON_LABELS] : '已归档';
-  return (
-    <Tooltip title={reason}>
-      <Tag color="default" style={{ opacity: 0.8 }}>
-        📦 归档
-      </Tag>
-    </Tooltip>
-  );
-}
 
 // ─── 移动端卡片 ────────────────────────────────────────────────────────────
 
@@ -62,7 +52,7 @@ function BoardCard({
               {row.full_name}
             </Typography.Text>
           </Link>
-          <ArchivedTag row={row} />
+          <ArchivedTag archived={row.is_archived} reason={row.archived_reason} />
         </Flex>
         {row.description && (
           <Typography.Text
@@ -108,9 +98,6 @@ function MobileBoard({
   categoryNameMap: Record<string, string>;
   languageEnum: Record<string, { text: string }>;
 }) {
-  const [data, setData] = useState<BoardRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<string | undefined>();
@@ -118,39 +105,20 @@ function MobileBoard({
   const [language, setLanguage] = useState<string | undefined>();
   const pageSize = 20;
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, total } = await fetchBoard({
-          page,
-          pageSize,
-          orderBy: 'rank',
-          orderAsc: true,
-          filters: {
-            keyword: keyword || undefined,
-            category,
-            effectiveState,
-            language,
-            excludeAdapted,
-            excludeArchived,
-          },
-        });
-        if (!cancelled) {
-          setData(data);
-          setTotal(total);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [page, keyword, category, effectiveState, language, excludeAdapted, excludeArchived]);
+  const { data, total, loading } = useBoardData({
+    page,
+    pageSize,
+    orderBy: 'rank',
+    orderAsc: true,
+    filters: {
+      keyword: keyword || undefined,
+      category,
+      effectiveState,
+      language,
+      excludeAdapted,
+      excludeArchived,
+    },
+  });
 
   return (
     <Spin spinning={loading}>
@@ -324,7 +292,11 @@ function DesktopBoard({
       ],
       filterMultiple: false,
       render: (_, r) =>
-        r.is_archived ? <ArchivedTag row={r} /> : <span style={{ color: '#bfbfbf' }}>—</span>,
+        r.is_archived ? (
+          <ArchivedTag archived={r.is_archived} reason={r.archived_reason} />
+        ) : (
+          <span style={{ color: '#bfbfbf' }}>—</span>
+        ),
     },
     {
       title: 'Star',
