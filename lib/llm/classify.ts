@@ -2,7 +2,13 @@
 import { generateObject } from 'ai';
 import { classifyModel, CLASSIFY_MODEL_NAME } from '@/lib/llm/provider';
 import { classifySchema, type ClassifyResult } from '@/lib/llm/schema';
-import { systemPrompt, buildUserPrompt, PROMPT_VERSION } from '@/lib/llm/prompts';
+import {
+  systemPrompt,
+  buildUserPrompt,
+  prepareReadme,
+  PROMPT_VERSION,
+  README_CHARS_TIER1,
+} from '@/lib/llm/prompts';
 import { llmLimiter, withRetry } from '@/lib/ratelimit/limiter';
 import { stableHash } from '@/lib/hash';
 import type { CollectedSignals } from '@/lib/harmony/signals';
@@ -37,7 +43,12 @@ function signalFingerprint(sig: CollectedSignals) {
   };
 }
 
-export function classifyInputHash(repo: AnalyzeRepo, sig: CollectedSignals): string {
+export function classifyInputHash(
+  repo: AnalyzeRepo,
+  sig: CollectedSignals,
+  readme: string | null,
+): string {
+  const head = prepareReadme(readme, README_CHARS_TIER1);
   return stableHash({
     v: PROMPT_VERSION,
     m: CLASSIFY_MODEL_NAME,
@@ -47,6 +58,7 @@ export function classifyInputHash(repo: AnalyzeRepo, sig: CollectedSignals): str
     lang: repo.primary_language,
     topics: [...repo.topics].sort(),
     sig: signalFingerprint(sig),
+    readme: head ? stableHash(head) : null,
   });
 }
 
@@ -54,6 +66,7 @@ export async function classifyRepo(
   repo: AnalyzeRepo,
   sig: CollectedSignals,
   categoryTree: CategoryTreeNode[],
+  readme: string | null,
 ): Promise<LlmOutput<ClassifyResult>> {
   const result = await withRetry(
     () =>
@@ -64,7 +77,7 @@ export async function classifyRepo(
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
           system: systemPrompt(1, categoryTree),
-          prompt: buildUserPrompt(repo, sig),
+          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER1)),
           maxRetries: 1,
         }),
       ),
@@ -73,7 +86,7 @@ export async function classifyRepo(
   const usage = result.usage as Record<string, number> | undefined;
   return {
     data: result.object,
-    input_hash: classifyInputHash(repo, sig),
+    input_hash: classifyInputHash(repo, sig, readme),
     tokens_in: usage?.promptTokens ?? usage?.inputTokens ?? null,
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: CLASSIFY_MODEL_NAME,

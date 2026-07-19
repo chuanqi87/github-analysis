@@ -64,13 +64,13 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
           stars: repo.stars,
           license: repo.license,
         };
-        const hash = classifyInputHash(analyzeRepo, sig);
+        const hash = classifyInputHash(analyzeRepo, sig, repo.readme_text);
         if (existing.get(repo.id) === hash) {
           skipped++;
           return;
         }
         try {
-          const out = await classifyRepo(analyzeRepo, sig, categoryTree);
+          const out = await classifyRepo(analyzeRepo, sig, categoryTree, repo.readme_text);
 
           // 解析分类 slug → 数据库 ID,处理新分类提议
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);

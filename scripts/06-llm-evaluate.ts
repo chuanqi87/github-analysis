@@ -11,6 +11,28 @@ import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
 
+/**
+ * 加载品类适配现状(v_category_stats),格式化为 prompt 文本。
+ * 用于锚定 LLM 的 ecosystem_gap 评分;查询失败不阻断流程(降级为无统计)。
+ */
+async function loadCategoryStatsText(): Promise<string | null> {
+  try {
+    const { data, error } = await getAdminClient()
+      .from('v_category_stats')
+      .select('category, category_name, total, adapted');
+    if (error || !data?.length) {
+      if (error) log(`加载 v_category_stats 失败(降级为无统计):${error.message}`);
+      return null;
+    }
+    return (data as { category: string; category_name: string; total: number; adapted: number }[])
+      .map((r) => `- ${r.category}(${r.category_name}):已适配 ${r.adapted} / 共 ${r.total}`)
+      .join('\n');
+  } catch (err) {
+    log(`加载 v_category_stats 异常(降级为无统计):${String(err).slice(0, 120)}`);
+    return null;
+  }
+}
+
 async function loadTier1Ids(): Promise<Set<number>> {
   const client = getAdminClient();
   const set = new Set<number>();
@@ -67,7 +89,11 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
     // 加载动态分类树(管道侧用 service_role,绕过 RLS)
     const adminClient = getAdminClient();
     const categoryTree = await loadCategoryTree(adminClient);
-    log(`tier-2 深评 ${candidates.length} 个候选(百炼),${categoryTree.length} 个分类节点…`);
+    const categoryStats = await loadCategoryStatsText();
+    log(
+      `tier-2 深评 ${candidates.length} 个候选(百炼),${categoryTree.length} 个分类节点` +
+        `${categoryStats ? ',已注入品类适配统计' : ''}…`,
+    );
 
     let analyzed = 0;
     let skipped = 0;
@@ -93,7 +119,7 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
           return;
         }
         try {
-          const out = await evaluateRepo(analyzeRepo, sig, repo.readme_text, categoryTree);
+          const out = await evaluateRepo(analyzeRepo, sig, repo.readme_text, categoryTree, categoryStats);
 
           // 解析分类 slug → 数据库 ID,处理新分类提议
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);

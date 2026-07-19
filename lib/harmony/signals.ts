@@ -3,7 +3,7 @@ import type { HarmonyState } from '@/lib/types';
 import { keywordHits, keywordScore } from '@/lib/harmony/keywords';
 import { findOhpmPackage } from '@/lib/harmony/ohpm';
 import { matchRegistry, type RegistryIndex } from '@/lib/harmony/registry';
-import { searchGitCodeWithKnown, type GitCodeResult } from '@/lib/harmony/gitcode';
+import { searchGitCodeWithKnown, isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
 
 export interface SignalRepo {
   full_name: string;
@@ -50,11 +50,14 @@ function decideHint(s: {
   ets: boolean;
   kw: number;
   gitcode: boolean;
+  gitcodeTrusted: boolean;
 }): { state: HarmonyState; suspected: boolean } {
   if (s.ohpm) return { state: 'ADAPTED', suspected: false };
-  if (s.gitcode) return { state: 'ADAPTED', suspected: true }; // GitCode 找到适配仓
+  // GitCode 官方组织(SIG/TPC)适配仓才提示 ADAPTED;其余搜索命中可信度低,降级 PARTIAL
+  if (s.gitcode && s.gitcodeTrusted) return { state: 'ADAPTED', suspected: true };
   if (s.project) return { state: 'PARTIAL', suspected: false };
   if (s.registry) return { state: 'PARTIAL', suspected: false };
+  if (s.gitcode) return { state: 'PARTIAL', suspected: true };
   if (s.ets || s.kw >= 0.5) return { state: 'NOT_ADAPTED', suspected: true };
   return { state: 'NOT_ADAPTED', suspected: false };
 }
@@ -119,6 +122,7 @@ export async function collectHarmonySignals(
     ets: hasEts,
     kw: kwScore,
     gitcode: gitcodeMatched,
+    gitcodeTrusted: isTrustedGitcodeOrg(gitcodeRepoUrl),
   });
 
   return {
@@ -141,6 +145,7 @@ export async function collectHarmonySignals(
       registry_match: reg,
       probed_ohpm: shouldOhpm,
       gitcode_searched: shouldGitCode,
+      gitcode_org_trusted: gitcodeMatched && isTrustedGitcodeOrg(gitcodeRepoUrl),
     },
     gitcode_matched: gitcodeMatched,
     gitcode_repo_url: gitcodeRepoUrl,

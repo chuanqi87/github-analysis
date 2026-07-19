@@ -65,6 +65,7 @@ pnpm db:migrate                            # 执行 supabase/migrations/
 - **分类体系已迁移到 `categories` 表**(动态二级分类);`lib/types.ts` 里 `REPO_CATEGORIES`/`CATEGORY_LABELS` 及 `analysis.category` 枚举列均为 `@deprecated` 过渡兼容,新代码走 `CategoryRow`/`categories` 表 + `lib/category/loader.ts`。
 - **归档判定**:超过 3 年无 commit 判 `stale_repository`;归档仓库在 LLM 阶段前被 `mark-archived` 跳过以省 token。
 - **改评分权重不需要跑 LLM**:改 `lib/scoring/priority.ts` 后 `--stage=score` 即可,别重跑 classify/evaluate。
+- **改 LLM prompt/schema 要 bump `PROMPT_VERSION`**([lib/llm/prompts.ts](lib/llm/prompts.ts),现 p5):所有 input_hash 随之失效,下次管道会全量重跑 LLM(token 成本);先 `--stage=classify --limit=20` 小切片验证输出质量再放量。tier-2 注入的品类适配统计刻意**不进 input_hash**,避免统计微变触发全量重评。
 
 ## 部署与调度
 

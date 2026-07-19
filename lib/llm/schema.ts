@@ -35,20 +35,24 @@ export const classifySchema = z.object({
     .describe('当 propose_new_category=true 时,填写新分类详情'),
   // 鸿蒙化评估
   harmony_suggestion: harmonyEnum.describe(
-    '鸿蒙化状态建议:对鸿蒙生态的贡献潜力评估,须与给定事实信号一致',
+    '适配状态:严格按系统提示的优先级判定表,只依据给定事实信号,不得输出 NOT_ADAPTED',
   ),
   mobile_relevance: z
     .number()
     .min(0)
     .max(1)
-    .describe('对鸿蒙生态的价值 0-1 (不仅限于移动端,包括学习资源、工具链等生态贡献)'),
-  feasibility: z.number().min(0).max(1).describe('对鸿蒙生态贡献的可行性/意义 0-1'),
+    .describe('对鸿蒙生态的价值 0-1,按系统提示锚点标尺打分,用满区间拉开区分度'),
+  feasibility: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe('适配可行性 0-1,按锚点标尺打分,考虑平台耦合与 license'),
   harmony_adapted_repo_url: z
     .string()
     .nullable()
     .default(null)
-    .describe('已知的鸿蒙化适配仓库地址(GitCode/Gitee等),若无则填null'),
-  confidence: z.number().min(0).max(1),
+    .describe('鸿蒙化适配仓库地址:只能取自给定信号中的 URL,严禁自行构造,无则填 null'),
+  confidence: z.number().min(0).max(1).describe('结论置信度 0-1,信息不足时必须给低值'),
 });
 export type ClassifyResult = z.infer<typeof classifySchema>;
 
@@ -58,30 +62,45 @@ export const evaluateSchema = z.object({
   subcategory: z.string().describe('子分类 slug'),
   propose_new_category: z.boolean().default(false),
   new_category: newCategoryProposalSchema.nullable().default(null),
-  harmony_suggestion: harmonyEnum,
-  mobile_relevance: z.number().min(0).max(1).describe('对鸿蒙生态的价值 0-1'),
-  feasibility: z.number().min(0).max(1).describe('对鸿蒙生态贡献的可行性/意义 0-1'),
-  effort_estimate: z.number().min(0).max(1).describe('生态贡献工作量 0 易 1 难'),
-  ecosystem_gap: z.number().min(0).max(1).describe('该品类鸿蒙生态空白程度 0-1'),
+  harmony_suggestion: harmonyEnum.describe(
+    '适配状态:严格按系统提示的优先级判定表,只依据给定事实信号,不得输出 NOT_ADAPTED',
+  ),
+  mobile_relevance: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe('对鸿蒙生态的价值 0-1,按锚点标尺打分,用满区间拉开区分度'),
+  feasibility: z.number().min(0).max(1).describe('适配可行性 0-1,按锚点标尺打分'),
+  effort_estimate: z.number().min(0).max(1).describe('适配工作量 0 易 1 难,按锚点标尺打分'),
+  ecosystem_gap: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe('该品类鸿蒙生态空白程度 0-1;若提供了品类适配现状数据则以其为准'),
   adaptation_points: z
     .array(
       z.object({
-        area: z.string().describe('适配/贡献点领域,如 UI/网络/存储/原生能力/文档/学习资源/工具链'),
-        description: z.string(),
+        area: z.string().describe('适配/贡献点领域,如 UI/网络/存储/原生能力/文档/工具链'),
+        description: z.string().describe('具体要做什么,必须挂到该项目的具体模块/依赖/功能'),
         difficulty: z.enum(['low', 'medium', 'high']),
+        evidence: z
+          .string()
+          .describe('依据:引用 README 原文短句、信号条目或依赖名,不得编造'),
       }),
     )
     .max(6)
     .default([]),
   recommended_approach: z
     .string()
-    .describe('推荐路径,如 ArkTS 重写 / NAPI 封装 C++ / 翻译本地化 / 贡献鸿蒙模板 / 不建议'),
-  reasoning: z.string().describe('评估理由(中文,从鸿蒙生态端到端视角分析)'),
+    .describe('推荐路径:指明具体技术方案与入手点(如 NAPI 封装某模块 / ArkUI 重写 UI 层),不写空话'),
+  reasoning: z
+    .string()
+    .describe('评估理由(中文):①技术栈与平台耦合点 ②适配现状证据 ③推荐路径依据 ④关键风险'),
   harmony_adapted_repo_url: z
     .string()
     .nullable()
     .default(null)
-    .describe('已知的鸿蒙化适配仓库地址,若无则填null'),
-  confidence: z.number().min(0).max(1),
+    .describe('鸿蒙化适配仓库地址:只能取自给定信号中的 URL,严禁自行构造,无则填 null'),
+  confidence: z.number().min(0).max(1).describe('结论置信度 0-1,信息不足时必须给低值'),
 });
 export type EvaluateResult = z.infer<typeof evaluateSchema>;

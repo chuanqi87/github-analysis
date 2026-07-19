@@ -11,6 +11,15 @@ export interface GitCodeResult {
 
 const GITCODE_SEARCH_URL = 'https://gitcode.com/search';
 
+/** 鸿蒙官方组织(SIG/TPC)维护的适配仓,可信度远高于个人/镜像仓。 */
+const TRUSTED_ORG_RE = /gitcode\.com\/(openharmony-sig|openharmony-tpc|openharmony)\//i;
+
+export function isTrustedGitcodeOrg(url: string | null | undefined): boolean {
+  return !!url && TRUSTED_ORG_RE.test(url);
+}
+
+const HARMONY_RE = /openharmony|harmonyos|ohos|鸿蒙|harmony/i;
+
 /** 搜索关键词组合 */
 function buildSearchQueries(repoName: string): string[] {
   return [
@@ -20,71 +29,52 @@ function buildSearchQueries(repoName: string): string[] {
   ];
 }
 
-/** 解析 GitCode 搜索结果页 */
+function normalizeName(s: string): string {
+  return s.toLowerCase().replace(/[-_.\s]/g, '');
+}
+
+/**
+ * 判定搜索结果是否为原项目的疑似适配仓:
+ * 必须同时满足「鸿蒙相关」与「名称匹配」(此前二者取或,导致大量误报)。
+ * 名称过短(<3 归一化字符)无法可靠匹配,直接排除。
+ */
+function isAdaptationCandidate(name: string, desc: string, url: string, repoName: string): boolean {
+  if (!HARMONY_RE.test(`${name} ${desc} ${url}`)) return false;
+  const target = normalizeName(repoName);
+  if (target.length < 3) return false;
+  const lastSeg = url.split('/').filter(Boolean).pop() ?? '';
+  return normalizeName(name).includes(target) || normalizeName(lastSeg).includes(target);
+}
+
+/** 解析 GitCode 搜索结果页,官方组织仓优先。 */
 function parseSearchResults(html: string, repoName: string): GitCodeResult | null {
   const $ = cheerio.load(html);
-  
-  // 查找搜索结果中的仓库链接
-  const results: { url: string; name: string; desc: string }[] = [];
-  
-  // GitCode 搜索结果通常在 .search-result-list 或类似结构中
+  const candidates: { url: string; name: string; desc: string }[] = [];
+  const seen = new Set<string>();
+
+  const push = (href: string | undefined, name: string, desc: string) => {
+    if (!href || !name) return;
+    const url = href.startsWith('http') ? href : `https://gitcode.com${href}`;
+    if (seen.has(url) || !isAdaptationCandidate(name, desc, url, repoName)) return;
+    seen.add(url);
+    candidates.push({ url, name, desc });
+  };
+
   $('a[href*="/project/"]').each((_, el) => {
-    const href = $(el).attr('href');
-    const text = $(el).text().trim();
-    if (href && text) {
-      const url = href.startsWith('http') ? href : `https://gitcode.com${href}`;
-      // 检查是否包含鸿蒙相关关键词
-      const isHarmonyRelated = 
-        text.toLowerCase().includes('openharmony') ||
-        text.toLowerCase().includes('harmony') ||
-        text.toLowerCase().includes('ohos') ||
-        text.toLowerCase().includes('鸿蒙');
-      
-      // 检查仓库名是否匹配原项目
-      const nameLower = text.toLowerCase();
-      const repoNameLower = repoName.toLowerCase();
-      const isNameMatch = nameLower.includes(repoNameLower) || 
-                          repoNameLower.includes(nameLower.split('/')[nameLower.split('/').length - 1]);
-      
-      if (isHarmonyRelated || isNameMatch) {
-        results.push({ url, name: text, desc: '' });
-      }
-    }
+    push($(el).attr('href'), $(el).text().trim(), '');
   });
-  
-  // 也查找 .project-item 或类似结构
   $('.project-item, .search-item, [class*="project"]').each((_, el) => {
     const link = $(el).find('a[href*="/project/"]').first();
-    const href = link.attr('href');
-    const name = link.text().trim();
-    const desc = $(el).find('.description, .desc, p').first().text().trim();
-    
-    if (href && name) {
-      const url = href.startsWith('http') ? href : `https://gitcode.com${href}`;
-      const nameLower = name.toLowerCase();
-      const descLower = desc.toLowerCase();
-      
-      const isHarmonyRelated = 
-        nameLower.includes('openharmony') ||
-        nameLower.includes('harmony') ||
-        nameLower.includes('ohos') ||
-        nameLower.includes('鸿蒙') ||
-        descLower.includes('openharmony') ||
-        descLower.includes('harmony') ||
-        descLower.includes('ohos') ||
-        descLower.includes('鸿蒙');
-      
-      if (isHarmonyRelated) {
-        results.push({ url, name, desc });
-      }
-    }
+    push(
+      link.attr('href'),
+      link.text().trim(),
+      $(el).find('.description, .desc, p').first().text().trim(),
+    );
   });
-  
-  if (results.length === 0) return null;
-  
-  // 优先选择名称最匹配的
-  const best = results.find(r => r.name.toLowerCase().includes(repoName.toLowerCase())) || results[0];
-  
+
+  if (candidates.length === 0) return null;
+
+  const best = candidates.find((c) => isTrustedGitcodeOrg(c.url)) ?? candidates[0];
   return {
     matched: true,
     repo_url: best.url,

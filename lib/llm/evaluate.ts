@@ -2,7 +2,13 @@
 import { generateObject } from 'ai';
 import { evaluateModel, EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
 import { evaluateSchema, type EvaluateResult } from '@/lib/llm/schema';
-import { systemPrompt, buildUserPrompt, PROMPT_VERSION } from '@/lib/llm/prompts';
+import {
+  systemPrompt,
+  buildUserPrompt,
+  prepareReadme,
+  PROMPT_VERSION,
+  README_CHARS_TIER2,
+} from '@/lib/llm/prompts';
 import { llmLimiter, withRetry } from '@/lib/ratelimit/limiter';
 import { stableHash } from '@/lib/hash';
 import type { CollectedSignals } from '@/lib/harmony/signals';
@@ -25,6 +31,8 @@ export function evaluateInputHash(
   sig: CollectedSignals,
   readme: string | null,
 ): string {
+  // hash 用清洗截断后的 README:超出截断窗口的尾部变动不触发重评
+  const prepared = prepareReadme(readme, README_CHARS_TIER2);
   return stableHash({
     v: PROMPT_VERSION,
     m: EVALUATE_MODEL_NAME,
@@ -34,7 +42,7 @@ export function evaluateInputHash(
     lang: repo.primary_language,
     topics: [...repo.topics].sort(),
     sig: signalFingerprint(sig),
-    readme: readme ? stableHash(readme) : null,
+    readme: prepared ? stableHash(prepared) : null,
   });
 }
 
@@ -43,6 +51,8 @@ export async function evaluateRepo(
   sig: CollectedSignals,
   readme: string | null,
   categoryTree: CategoryTreeNode[],
+  /** 品类适配统计(来自 v_category_stats),锚定 ecosystem_gap;不参与 input_hash,避免统计微变触发全量重评 */
+  categoryStats?: string | null,
 ): Promise<LlmOutput<EvaluateResult>> {
   const result = await withRetry(
     () =>
@@ -52,8 +62,8 @@ export async function evaluateRepo(
           schema: evaluateSchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(2, categoryTree),
-          prompt: buildUserPrompt(repo, sig, readme),
+          system: systemPrompt(2, categoryTree, { categoryStats }),
+          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER2)),
           maxRetries: 1,
         }),
       ),
