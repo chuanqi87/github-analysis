@@ -26,6 +26,7 @@ import HarmonyBadge from '@/components/HarmonyBadge';
 import ArchivedTag from '@/components/ArchivedTag';
 import NotConfigured from '@/components/NotConfigured';
 import SignalTags from '@/components/admin/SignalTags';
+import DeepwikiFacts from '@/components/DeepwikiFacts';
 import StatsCards from '@/components/admin/StatsCards';
 import PipelineCard from '@/components/admin/PipelineCard';
 import LoginCard from '@/components/admin/LoginCard';
@@ -230,6 +231,11 @@ export default function AdminPage() {
           columns={columns}
           cardBordered
           scroll={{ x: 1400 }}
+          // 展开即见代码证据:人工标记是权威,给审核人现成的路径与引文能显著提速
+          expandable={{
+            expandedRowRender: (r) => <DeepwikiFacts row={r} />,
+            rowExpandable: (r) => r.deepwiki_indexed != null,
+          }}
           options={{ reload: true, density: true }}
           toolBarRender={() => [
             <Segmented

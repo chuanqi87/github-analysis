@@ -1,6 +1,8 @@
 # 引入 DeepWiki 重构鸿蒙化分析管道
 
-> 状态:设计稿 · 目标分支 `claude/harmonyos-feasibility-redesign-ud2ciz`
+> 状态:**已实施** · 分支 `claude/harmonyos-feasibility-redesign-ud2ciz`
+>
+> 实施过程中相对本稿的两处调整已在下文标注(阶段文件命名、阶段顺序)。
 
 ## 1. 背景与动机
 
@@ -66,6 +68,21 @@ OpenHarmony/build-profile.json5
 
 **输出格式不稳定**:有时裹 ```json 围栏有时不裹;结尾总会附加 `Wiki pages you might want to explore:` 和一条 search URL。
 
+#### 2.3.1 改问法后的复测(实施阶段验证)
+
+把问题从「问判断」改成「问事实」后,上面两个错例都被纠正:
+
+| 用例 | 初测(问判断) | 复测(问事实) |
+|---|---|---|
+| `vercel/next.js` | `has_harmony_code: true, effort: low` ❌ | `harmony_scope: build_target_only`、`declares: false` ✅ |
+| `sqlite/sqlite` | `platform_abstraction: "none"` ❌ | `platform_layer_paths: [src/os.c, src/os_unix.c, src/os_win.c]`、`backends: [unix, win32, kv, vxworks]` ✅ |
+| `Tencent/MMKV` | 正确 | `harmony_scope: dedicated_port` + 完整路径 ✅ |
+| 未索引仓库 | — | 208ms 返回 `indexed: false` ✅ |
+
+结论:**问「有什么、在哪、原文是什么」可靠,问「难不难、算不算」不可靠。**
+`sqlite` 那条尤其说明问题 —— 同一个模型、同一个索引,换个问法就从"没有平台抽象层"
+变成准确列出 VFS 的六个文件和四个已有后端。所以 `questions.ts` 里所有问题都只问事实。
+
 ### 2.4 由此推导出的设计原则
 
 > **DeepWiki 负责「事实」,我们的 LLM 负责「判断」,人工标记依然是「权威」。**
@@ -108,9 +125,17 @@ lib/deepwiki/
 - zod `safeParse` + 枚举 `catch()` 兜底,非法值(如 `not_applicable`)归一到 `null` 而非整条丢弃。
 - 解析失败保留 `raw_answers`,不阻塞管道。
 
-### 4.2 新增管道阶段 `04b-deepwiki.ts`
+### 4.2 新增管道阶段 `09-deepwiki.ts`
 
-放在 `04-fetch-readme` 之后、`05-llm-classify` 之前(命名用 `04b` 而非重编号,避免大面积改动既有文件)。照 CLAUDE.md 约定:导出 `runDeepwiki(opts: StageOpts)`,`startRun/finishRun` 包裹写 `pipeline_runs`,用 `input_hash` 幂等跳过,注册进 `scripts/pipeline.ts` 的 `STAGES` / `FULL_ORDER` / `SYNC_ORDER`。仓库列表用 `scripts/_data.ts` 的 `loadStageRepos`。
+> **实施调整**:文件名用 `09-`(下一个可用编号)而非本稿最初设想的 `04b-` ——
+> 既有的 `08-mark-archived` 本来就排在 `05-llm-classify` 之前执行,说明编号是创建顺序、
+> 不是执行顺序,再造一个 `04b` 反而制造歧义。
+>
+> **执行位置也调整了**:放在 `build-registry` 之后、`harmony-signals` **之前**。
+> 原稿放在 `fetch-readme` 之后,但那样 `harmony-signals` 汇总 `auto_state_hint` 时
+> 还读不到当轮的 DeepWiki 证据,鸿蒙痕迹就白采了。
+
+照 CLAUDE.md 约定:导出 `runDeepwiki(opts: StageOpts)`,`startRun/finishRun` 包裹写 `pipeline_runs`,用 `input_hash` 幂等跳过,注册进 `scripts/pipeline.ts` 的 `STAGES` / `FULL_ORDER` / `SYNC_ORDER`。仓库列表用 `scripts/_data.ts` 的 `loadStageRepos`。
 
 **两档取数,控制成本(时间成本,DeepWiki 本身免费):**
 
@@ -123,31 +148,33 @@ B 档的两问:
 1. **鸿蒙证据问**:仓库内是否存在 OpenHarmony/HarmonyOS/ohos/ArkTS/`.ets`/`oh-package.json5`/`build-profile.json5` 痕迹,给出路径与原文引文;明确要求「没有就填空数组,不要编造路径」——实测这句有效,4/5 反例正确返回空。
 2. **移植面问**:平台抽象层在哪(路径)、原生代码占比、阻塞依赖清单、可移植核心在哪。
 
-**幂等键** `input_hash = stableHash({ full_name, pushed_at, QUESTION_VERSION })`。
+**幂等键** `input_hash = stableHash({ full_name, pushed_at, QUESTION_VERSION, depth })`。
 挂 `pushed_at` 的含义:仓库没有新提交就不重问,DeepWiki 的索引也不会变。
 
 **降级**:未索引 → 写 `indexed: false` 并继续,后续阶段行为与今天完全一致(README-only)。DeepWiki 挂了 → 整阶段可跳过,不阻塞管道。
 
 ### 4.3 新增表 `deepwiki_analysis`(`supabase/migrations/0013_deepwiki.sql`)
 
+实际落地的列见 `supabase/migrations/0013_deepwiki.sql`。相对本稿最初的草稿,
+证据字段拆得更细(`harmony_scope` 分级、`existing_platform_backends`、
+`platform_apis_used`、`conditional_compilation` 等),因为这些都是 LLM 判 feasibility
+时真正用得上的事实。核心几列:
+
 ```sql
-create table if not exists deepwiki_analysis (
-  repository_id          bigint primary key references repositories (id) on delete cascade,
-  indexed                boolean not null default false,
-  wiki_toc               text,        -- read_wiki_structure 原文(~2KB)
-  harmony_evidence_paths text[],
-  harmony_evidence_quote text,
-  platform_layer_paths   text[],
-  portable_core_paths    text[],
-  blocking_deps          jsonb,       -- [{name, why}]
-  native_code_ratio      real,
-  facts                  jsonb,       -- 解析后的完整结构
-  raw_answers            jsonb,       -- 原始回答,便于调试与复现
-  question_version       text not null,
-  input_hash             text not null,
-  fetched_at             timestamptz not null default now()
-);
+harmony_scope            text,     -- dedicated_port | build_target_only | incidental_mention | none
+harmony_paths            text[],
+harmony_quote            text,
+has_platform_abstraction boolean,
+platform_layer_paths     text[],
+existing_platform_backends text[], -- 已有后端越多,加鸿蒙后端越有现成插槽
+blocking_deps            jsonb,    -- [{name, why}]
+raw_answers              jsonb,    -- 原始回答,解析规则变了可离线重跑
+question_version         text not null,
+input_hash               text not null
 ```
+
+另外给 `harmony_signals` 加了 `deepwiki_scope` 快照列,让 `auto_state_hint` 可追溯 ——
+看板/管理台能直接回答「这个 PARTIAL 是凭什么给的」。
 
 RLS 公开只读(照 `0001_init.sql` 既有模式),并把关键列并进 `repo_board` 视图 —— 注意 `repo_board` 历来是 `drop view` + 全量重建,新迁移沿用同一写法。
 
@@ -155,7 +182,9 @@ RLS 公开只读(照 `0001_init.sql` 既有模式),并把关键列并进 `repo_b
 
 ```sql
 case
-  when d.harmony_evidence_paths is not null or d.platform_layer_paths is not null then 'wiki'
+  when d.platform_layer_paths is not null and array_length(d.platform_layer_paths, 1) > 0 then 'wiki'
+  when d.harmony_paths is not null and array_length(d.harmony_paths, 1) > 0 then 'wiki'
+  when d.indexed then 'toc'
   when r.readme_text is not null then 'readme'
   else 'none'
 end as evidence_level
@@ -177,9 +206,9 @@ end as evidence_level
 
 | 证据 | 贡献 |
 |---|---|
-| ohpm 有已发布包 / 可信 GitCode 组织 | 维持现状,最强 |
-| DeepWiki 命中 `oh-package.json5` / `build-profile.json5` / `.ets` 目录 | 等同现有 `project`/`ets` 信号 |
-| DeepWiki 仅命中零散关键词(next.js 型) | 只加 `keyword_score`,**不得单独推到 ADAPTED** |
+| ohpm 有已发布包 / 可信 GitCode 组织 | 维持现状,最强,→ `ADAPTED` |
+| DeepWiki `harmony_scope = dedicated_port` | 与本仓库自带鸿蒙工程文件同级,→ `PARTIAL`(是代码事实,但没有"已发包"硬) |
+| DeepWiki `build_target_only` / `incidental_mention`(next.js 型) | **完全不参与判定**,在调用处就被挡掉 |
 
 ### 4.6 重构 tier-3:换引擎,不换定位
 
@@ -187,7 +216,7 @@ end as evidence_level
 
 **方案:tier-3 改为 DeepWiki 深度问询 + 一次 qwen 结构化定级。**
 
-- 新增 `scripts/09-deepwiki-deep.ts`(TS,进主管道),对 top-N 候选发 6~8 个定向问题(构建系统 / 原生桥接 / UI 层 / 网络层 / 存储层 / 条件编译 / 许可证 / 已有移植分支),汇总后**一次** `generateObject` 产出 tier-3 结论。
+- 新增 `scripts/10-deepwiki-deep.ts`(TS,按需触发,不进 `--stage=all`),对 top-N 候选发 6~8 个定向问题(构建系统 / 原生桥接 / UI 层 / 网络层 / 存储层 / 条件编译 / 许可证 / 已有移植分支),汇总后**一次** `generateObject` 产出 tier-3 结论。
 - 收益:消除 CLAUDE.md 里记录的 TS/Python 割裂;tier-3 从「只能覆盖极少数」变成「可覆盖全部候选」。
 - `scripts/agent/` **保留为未索引仓库的兜底**,由 `04b` 标记的 `indexed = false` 列表驱动 `code-analysis.yml`。这样两条路径各司其职,而不是删掉一条能力。
 
@@ -208,16 +237,21 @@ end as evidence_level
 
 `lib/scoring/priority.ts` 的五项权重与乘子结构保持原样。理由:DeepWiki 改善的是 `feasibility` / `effort_estimate` / `ecosystem_gap` 这些**输入的质量**,不是模型结构;2.3 已证明 DeepWiki 的难度分级本身不可靠,不该让它进权重。`evidence_level` 只做展示,不进公式,避免排名震荡。
 
-## 5. 实施顺序
+## 5. 实施清单(已完成)
 
-1. `lib/deepwiki/`(client + parse + questions)+ 单测(用已抓的真实响应做 fixture,含 next.js 误判样本与 flutter 非法枚举样本)
-2. `0013_deepwiki.sql`(建表 + RLS + 重建 `repo_board`)
-3. `scripts/04b-deepwiki.ts` + 注册进 `pipeline.ts`
-4. 小切片验证:`pnpm pipeline --stage=deepwiki --limit=30`
-5. `lib/llm/prompts.ts` 注入 + `PROMPT_VERSION` → p6;`--stage=llm-classify --limit=20` 验证质量
-6. `lib/harmony/signals.ts` 接证据
-7. `scripts/09-deepwiki-deep.ts` 替换 tier-3 引擎;`code-analysis.yml` 改为只跑未索引兜底
-8. 前端:详情页 + admin + `EvidenceBadge`
+| # | 内容 | 落点 |
+|---|---|---|
+| 1 | MCP 客户端 + 宽松解析 + 提问模板 | `lib/deepwiki/{client,parse,questions,index}.ts` |
+| 2 | 建表 + RLS + 重建 `repo_board` + 清理旧 tier-3 行 | `supabase/migrations/0013_deepwiki.sql` |
+| 3 | 管道阶段 + 注册 | `scripts/09-deepwiki.ts`、`scripts/pipeline.ts` |
+| 4 | 事实注入 prompt,`PROMPT_VERSION` p5 → p6 | `lib/llm/prompts.ts`、`classify.ts`、`evaluate.ts` |
+| 5 | 证据参与 `auto_state_hint` | `lib/harmony/signals.ts`、`scripts/03-harmony-signals.ts` |
+| 6 | tier-3 换引擎 | `lib/llm/deep-evaluate.ts`、`scripts/10-deepwiki-deep.ts` |
+| 7 | Python Agent 转兜底 | `scripts/agent/run.py --not-indexed-only`、`code-analysis.yml` 拆两个 job |
+| 8 | 前端 | `components/{DeepwikiFacts,EvidenceBadge}.tsx`、`app/repo`、`app/admin`、`app/page.tsx`、`components/admin/SignalTags.tsx` |
+
+**放量前必须做的一步**:`PROMPT_VERSION` 升到 p6 会让所有 `input_hash` 失效、
+触发全量重跑 LLM。先跑 `--stage=llm-classify --limit=20` 小切片验证输出质量再放开。
 
 ## 6. 验证方式
 

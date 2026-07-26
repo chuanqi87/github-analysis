@@ -14,6 +14,20 @@ scripts/ 管道脚本               表 + 视图 + RLS 公开只读             
 service-role key 写库           harmony_overrides 人工标记 ← /admin 登录后直接写(即时生效)
 ```
 
+### 证据三层(改鸿蒙判定逻辑前必读)
+
+```
+证据层(facts)   GitHub 元数据 / README / ohpm+GitCode / DeepWiki 代码索引
+判断层(scores)  qwen tier-1 / tier-2 / tier-3 —— 只有它能给分级和评分
+权威层(truth)   harmony_overrides 人工标记 —— 覆盖一切自动判断
+```
+
+**DeepWiki 只进证据层,绝不进判断层。** 实测它的文件路径、代码引文、依赖名都准,
+但枚举结论不可靠:`vercel/next.js` 因一句 `process.platform === 'openharmony'`
+被它判成"已鸿蒙化",`sqlite/sqlite` 的 VFS(`os_unix.c`/`os_win.c`)被判成"无平台抽象层"。
+所以问它一律只问「有什么、在哪、原文是什么」,难度和状态由我们自己的 LLM 依据这些事实判。
+详见 [docs/deepwiki-redesign.md](docs/deepwiki-redesign.md)。
+
 - **计算与展示完全解耦**:前端是静态导出,不含任何服务端逻辑;所有写操作要么在 Actions(管道),要么在 `/admin`(人工标记 + 触发 workflow)。
 - **人工标记是权威**:`harmony_overrides.state` 覆盖一切自动判断,改动即时反映到看板视图,无需重建。
 
@@ -28,6 +42,8 @@ pnpm check                                 # 校验 .env 配置齐全
 pnpm pipeline --stage=<stage> [--limit=N] [--ids=1,2] [--force]
 pnpm pipeline --stage=all --limit=500      # 全流程小切片(推荐先验证再放量)
 pnpm pipeline --stage=sync                 # 同步模式:抓新仓库+初步分析,不含 LLM
+pnpm pipeline --stage=deepwiki --limit=30  # 只跑 DeepWiki 取数(免费,不烧 token)
+pnpm pipeline --stage=deepwiki-deep --limit=5   # tier-3 深挖(逐子系统问询 + 定级)
 pnpm db:migrate                            # 执行 supabase/migrations/
 ```
 
@@ -41,11 +57,12 @@ pnpm db:migrate                            # 执行 supabase/migrations/
 | `lib/queries.ts` | 浏览器端看板**读**查询 + 写 `harmony_overrides`。纯读查询集中于此。 |
 | `lib/github/` | `search`(star 分段枚举)、`graphql`(批量富化)、`rest`、`actions`(浏览器触发 workflow_dispatch)。 |
 | `lib/harmony/` | 鸿蒙信号:`ohpm`/`gitcode`/`registry` 底表、`keywords`、`signals` 汇总。 |
+| `lib/deepwiki/` | DeepWiki MCP 取数:`client`(JSON-RPC over HTTP+SSE,无状态,不引 SDK)、`questions`(提问模板 + `QUESTION_VERSION`)、`parse`(宽松解析)。**只产出事实,不产出判断**。 |
 | `lib/llm/` | 百炼 provider + zod schema + prompts + classify(tier-1)/evaluate(tier-2)/resolve-category。 |
 | `lib/scoring/priority.ts` | **纯函数**评分模型,前端与管道共用。调权重只需重跑 `--stage=score`,零 LLM 成本。 |
 | `lib/supabase/` | `client.ts`=anon key(前端,受 RLS);`admin.ts`=service-role(管道,绕过 RLS)。 |
 | `scripts/` | 编号管道阶段 `01~08` + `pipeline.ts` 编排 + `weekly-trending`/`build-registry`。 |
-| `scripts/agent/` | **独立的** Python tier-3 深度代码分析 Agent(OpenAI Agents SDK,下载源码后阅读)。与 TS 管道分离,由 `code-analysis.yml` 触发。 |
+| `scripts/agent/` | Python tarball Agent,现为 **tier-3 兜底**:只处理 DeepWiki 未索引的仓库(`--not-indexed-only`)。主路径是 `scripts/10-deepwiki-deep.ts`。 |
 | `supabase/migrations/` | 表结构 + RLS + 看板视图,顺序编号执行。 |
 
 ## 关键约定(改代码时遵守)
@@ -65,10 +82,16 @@ pnpm db:migrate                            # 执行 supabase/migrations/
 - **分类体系已迁移到 `categories` 表**(动态二级分类);`lib/types.ts` 里 `REPO_CATEGORIES`/`CATEGORY_LABELS` 及 `analysis.category` 枚举列均为 `@deprecated` 过渡兼容,新代码走 `CategoryRow`/`categories` 表 + `lib/category/loader.ts`。
 - **归档判定**:超过 3 年无 commit 判 `stale_repository`;归档仓库在 LLM 阶段前被 `mark-archived` 跳过以省 token。
 - **改评分权重不需要跑 LLM**:改 `lib/scoring/priority.ts` 后 `--stage=score` 即可,别重跑 classify/evaluate。
-- **改 LLM prompt/schema 要 bump `PROMPT_VERSION`**([lib/llm/prompts.ts](lib/llm/prompts.ts),现 p5):所有 input_hash 随之失效,下次管道会全量重跑 LLM(token 成本);先 `--stage=classify --limit=20` 小切片验证输出质量再放量。tier-2 注入的品类适配统计刻意**不进 input_hash**,避免统计微变触发全量重评。
+- **DeepWiki 别用 `read_wiki_contents`**:实测小项目(`sindresorhus/ky`)就返回 **685KB**,喂不进 LLM。只用 `read_wiki_structure`(~2KB/~1s)和 `ask_question`(5~9KB/7~14s)。
+- **`harmony_scope` 四分法不能退化成 boolean**:`dedicated_port` 才是适配证据;`build_target_only`(鸿蒙只是构建矩阵里一项)和 `incidental_mention`(只在文档注释里出现)**不构成适配**,`decideHint` 与 prompt 判定表里都有对应的反误判条款。删掉这个区分就会复现 next.js 被判 ADAPTED 的问题。
+- **DeepWiki 未索引是正常分支不是错误**:返回的是 `isError:false` 的正常响应,靠文案 `Repository not found` 判定(不能看 HTTP 状态码)。写 `indexed:false` 后继续,由 `scripts/agent/` 兜底。
+- **改 `lib/deepwiki/questions.ts` 的问题文本要 bump `QUESTION_VERSION`**,否则旧结果不会失效。
+- **DeepWiki 指纹(`deepwikiFingerprint`)刻意只取粗粒度**(有几条/哪一档,不含路径原文):它每次回答的措辞和路径顺序有微小抖动,把原文纳入 `input_hash` 会导致每轮管道全量重跑 LLM。
+- **改 LLM prompt/schema 要 bump `PROMPT_VERSION`**([lib/llm/prompts.ts](lib/llm/prompts.ts),现 p6):所有 input_hash 随之失效,下次管道会全量重跑 LLM(token 成本);先 `--stage=classify --limit=20` 小切片验证输出质量再放量。tier-2 注入的品类适配统计刻意**不进 input_hash**,避免统计微变触发全量重评。
 
 ## 部署与调度
 
 - `deploy-pages.yml`:push 时构建并发布到 GitHub Pages。
-- `analyze-full.yml`:手动/每周,全量或同步。`analyze-daily.yml`:每日热点 + 给 Supabase 免费实例保活。`code-analysis.yml`:tier-3 Python Agent。
+- `analyze-full.yml`:手动/每周,全量或同步。`analyze-daily.yml`:每日热点 + 给 Supabase 免费实例保活。
+- `code-analysis.yml`:tier-3,两个 job —— `deepwiki-deep`(主,TS,免费)→ `tarball-fallback`(兜底,Python,只跑 DeepWiki 未索引的仓库)。
 - 前端触发这些 workflow 走 `lib/github/actions.ts`,需 `NEXT_PUBLIC_GH_TRIGGER_TOKEN`(actions:write 的细粒度 PAT)。

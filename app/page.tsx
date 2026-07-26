@@ -22,6 +22,7 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import { useBoardData } from '@/lib/hooks/use-board-data';
 import HarmonyBadge from '@/components/HarmonyBadge';
+import EvidenceBadge from '@/components/EvidenceBadge';
 import ArchivedTag from '@/components/ArchivedTag';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
@@ -280,7 +281,12 @@ function DesktopBoard({
       width: 120,
       filters: HARMONY_STATES.map((s) => ({ text: HARMONY_STATE_LABELS[s], value: s })),
       filterMultiple: false,
-      render: (_, r) => <HarmonyBadge state={r.effective_state} reviewed={r.reviewed} />,
+      render: (_, r) => (
+        <Space size={4} wrap>
+          <HarmonyBadge state={r.effective_state} reviewed={r.reviewed} />
+          <EvidenceBadge level={r.evidence_level} />
+        </Space>
+      ),
     },
     {
       title: '归档',

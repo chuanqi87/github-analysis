@@ -8,6 +8,7 @@
 // 因此:先剥壳,再用 zod 宽松校验 —— 非法枚举归一到 null 而不是整条丢弃,
 // 解析失败也只降级为"这个字段没有",绝不让管道挂掉。
 import { z } from 'zod';
+import { HARMONY_SCOPES, type HarmonyScope } from '@/lib/types';
 
 /** DeepWiki 在正文后追加推荐内容的分隔标记。 */
 const TRAILER_MARKERS = [
@@ -92,13 +93,8 @@ function looseEnum<T extends readonly string[]>(allowed: T) {
 
 // ── Q1 鸿蒙证据 ──────────────────────────────────────────────────────────────
 
-export const HARMONY_SCOPES = [
-  'dedicated_port',
-  'build_target_only',
-  'incidental_mention',
-  'none',
-] as const;
-export type HarmonyScope = (typeof HARMONY_SCOPES)[number];
+export { HARMONY_SCOPES };
+export type { HarmonyScope };
 
 export const harmonyEvidenceSchema = z.object({
   harmony_paths: looseStringArray,

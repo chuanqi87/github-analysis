@@ -23,6 +23,8 @@ import { isSupabaseConfigured } from '@/lib/supabase/client';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import NotConfigured from '@/components/NotConfigured';
 import Tier3Analysis from '@/components/Tier3Analysis';
+import DeepwikiFacts from '@/components/DeepwikiFacts';
+import EvidenceBadge from '@/components/EvidenceBadge';
 
 const DIFF_COLOR: Record<string, string> = { low: 'green', medium: 'gold', high: 'red' };
 
@@ -85,6 +87,7 @@ function RepoDetail() {
               </a>
             </Typography.Title>
             <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
+            <EvidenceBadge level={row.evidence_level} />
             {row.is_archived && (
               <Tooltip title={archivedReason}>
                 <Tag color="default">📦 已归档</Tag>
@@ -108,6 +111,8 @@ function RepoDetail() {
           )}
         </Space>
       </Card>
+
+      <DeepwikiFacts row={row} />
 
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12}>

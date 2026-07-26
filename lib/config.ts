@@ -14,3 +14,6 @@ export const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
 
 /** GitHub Actions 运行记录页链接。 */
 export const GH_ACTIONS_URL = `https://github.com/${GH_REPO}/actions`;
+
+/** DeepWiki 站点根地址;详情页据此拼 `${DEEPWIKI_BASE}/{owner}/{repo}` 外链。 */
+export const DEEPWIKI_BASE = process.env.NEXT_PUBLIC_DEEPWIKI_BASE || 'https://deepwiki.com';

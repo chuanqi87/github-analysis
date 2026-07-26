@@ -2,6 +2,8 @@
 import { getSupabase } from '@/lib/supabase/client';
 import type {
   HarmonyState,
+  HarmonyScope,
+  EvidenceLevel,
   ScoreBreakdown,
   AdaptationPoint,
   ArchivedReason,
@@ -49,6 +51,23 @@ export interface BoardRow {
   registry_source: string | null;
   source_repo_url: string | null;
   keyword_score: number | null;
+  // ---- DeepWiki 代码事实(见 supabase/migrations/0013_deepwiki.sql)----------
+  deepwiki_indexed: boolean | null;
+  deepwiki_toc: string | null;
+  /** dedicated_port | build_target_only | incidental_mention | none */
+  deepwiki_harmony_scope: HarmonyScope | null;
+  deepwiki_harmony_paths: string[] | null;
+  deepwiki_harmony_quote: string | null;
+  deepwiki_project_type: string | null;
+  deepwiki_languages: string[] | null;
+  deepwiki_native_code_ratio: number | null;
+  deepwiki_has_platform_abstraction: boolean | null;
+  deepwiki_platform_layer_paths: string[] | null;
+  deepwiki_platform_backends: string[] | null;
+  deepwiki_portable_core_paths: string[] | null;
+  deepwiki_blocking_deps: { name: string; why: string }[] | null;
+  /** 这条结论的证据强度:wiki > toc > readme > none */
+  evidence_level: EvidenceLevel | null;
   override_state: HarmonyState | null;
   override_note: string | null;
   marked_by: string | null;
