@@ -1,0 +1,88 @@
+name: analyze-single
+
+# 单仓库全量分析：对指定仓库运行完整分析管道（基本信息 → DeepWiki → 鸿蒙信号 → LLM → 评分）。
+# 由管理后台详情页"触发全面分析"按钮触发，或手动指定仓库 ID。
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_id:
+        description: '仓库 ID（repositories 表主键）'
+        required: true
+      force:
+        description: '强制重新分析（忽略哈希缓存）'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: analyze-single-${{ github.event.inputs.repo_id }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
+      DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen-plus' }}
+      DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen-max' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build force flag
+        id: flags
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "force=--force" >> $GITHUB_OUTPUT
+          else
+            echo "force=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 1/7 富化元数据
+        run: pnpm pipeline --stage=enrich --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+      - name: 2/7 DeepWiki 代码事实
+        run: pnpm pipeline --stage=deepwiki --ids=${{ github.event.inputs.repo_id }} --evidence-limit=1 ${{ steps.flags.outputs.force }}
+
+      - name: 3/7 鸿蒙信号采集
+        run: pnpm pipeline --stage=harmony-signals --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+      - name: 4/7 获取 README
+        run: pnpm pipeline --stage=fetch-readme --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+      - name: 5/7 LLM 分类 + 评估
+        run: |
+          pnpm pipeline --stage=llm-classify --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+          pnpm pipeline --stage=llm-evaluate --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+      - name: 6/7 DeepWiki 深度分析 (tier-3)
+        run: pnpm pipeline --stage=deepwiki-deep --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+      - name: 7/7 评分 + 归档标记
+        run: |
+          pnpm pipeline --stage=mark-archived --ids=${{ github.event.inputs.repo_id }}
+          pnpm pipeline --stage=score
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🎯 单仓库全量分析完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 仓库 ID: \`${{ github.event.inputs.repo_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- 强制模式: ${{ github.event.inputs.force }}" >> $GITHUB_STEP_SUMMARY

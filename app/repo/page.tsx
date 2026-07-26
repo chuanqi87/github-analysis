@@ -3,8 +3,11 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Alert,
+  Button,
   Card,
   Descriptions,
+  Flex,
+  Popconfirm,
   Space,
   Tag,
   Tooltip,
@@ -16,10 +19,16 @@ import {
   Empty,
   Progress,
   Divider,
+  message,
 } from 'antd';
+import {
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import { ARCHIVED_REASON_LABELS, type ArchivedReason } from '@/lib/types';
 import { fetchRepoByFullName, type BoardRow } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { triggerGitHubWorkflow } from '@/lib/github/actions';
+import { GH_TRIGGER_TOKEN, GH_ACTIONS_URL } from '@/lib/config';
 import HarmonyBadge from '@/components/HarmonyBadge';
 import NotConfigured from '@/components/NotConfigured';
 import Tier3Analysis from '@/components/Tier3Analysis';
@@ -45,6 +54,7 @@ function RepoDetail() {
   const full = params.get('full');
   const [row, setRow] = useState<BoardRow | null>(null);
   const [loading, setLoading] = useState(true);
+  const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
     if (!isSupabaseConfigured() || !full) {
@@ -56,6 +66,35 @@ function RepoDetail() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [full]);
+
+  const handleTriggerAnalysis = async () => {
+    if (!row) return;
+    setTriggering(true);
+    try {
+      const result = await triggerGitHubWorkflow('analyze-single.yml', {
+        repo_id: String(row.id),
+        force: 'true',
+      });
+      if (result.success) {
+        message.success(
+          <span>
+            分析任务已触发，请前往{' '}
+            <a href={GH_ACTIONS_URL} target="_blank" rel="noreferrer">
+              Actions 页面
+            </a>{' '}
+            查看进度
+          </span>,
+          8,
+        );
+      } else {
+        message.error(result.message);
+      }
+    } catch (e) {
+      message.error(`触发失败: ${(e as Error).message}`);
+    } finally {
+      setTriggering(false);
+    }
+  };
 
   if (!isSupabaseConfigured()) return <NotConfigured />;
   if (loading) return <Spin />;
@@ -80,21 +119,52 @@ function RepoDetail() {
 
       <Card>
         <Space direction="vertical" size={4} style={{ width: '100%' }}>
-          <Space align="center" wrap>
-            <Typography.Title level={3} style={{ margin: 0 }}>
-              <a href={`https://github.com/${row.full_name}`} target="_blank" rel="noreferrer">
-                {row.full_name}
-              </a>
-            </Typography.Title>
-            <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
-            <EvidenceBadge level={row.evidence_level} />
-            {row.is_archived && (
-              <Tooltip title={archivedReason}>
-                <Tag color="default">📦 已归档</Tag>
-              </Tooltip>
+          <Flex align="center" wrap="wrap" gap={8} justify="space-between" style={{ width: '100%' }}>
+            <Space align="center" wrap>
+              <Typography.Title level={3} style={{ margin: 0 }}>
+                <a href={`https://github.com/${row.full_name}`} target="_blank" rel="noreferrer">
+                  {row.full_name}
+                </a>
+              </Typography.Title>
+              <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
+              <EvidenceBadge level={row.evidence_level} />
+              {row.is_archived && (
+                <Tooltip title={archivedReason}>
+                  <Tag color="default">📦 已归档</Tag>
+                </Tooltip>
+              )}
+              {row.category && <Tag color="blue">{row.category_name || row.category}</Tag>}
+            </Space>
+            {GH_TRIGGER_TOKEN && !row.is_archived && (
+              <Popconfirm
+                title="触发全面分析"
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Typography.Text>将对该项目运行完整分析管道：</Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      元数据富化 → DeepWiki 代码事实 → 鸿蒙信号采集 → README 获取 → LLM 分类/评估 → 深度分析 → 评分
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      任务将在 GitHub Actions 后台运行，预计 5-15 分钟完成。
+                    </Typography.Text>
+                  </Space>
+                }
+                onConfirm={handleTriggerAnalysis}
+                okText="确认触发"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  type="primary"
+                  icon={<ThunderboltOutlined />}
+                  loading={triggering}
+                  size="small"
+                >
+                  触发全面分析
+                </Button>
+              </Popconfirm>
             )}
-            {row.category && <Tag color="blue">{row.category_name || row.category}</Tag>}
-          </Space>
+          </Flex>
           <Typography.Text type="secondary">{row.description}</Typography.Text>
           <Space wrap>
             <Tag>★ {row.stars.toLocaleString()}</Tag>
