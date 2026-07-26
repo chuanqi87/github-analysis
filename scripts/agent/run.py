@@ -58,9 +58,13 @@ def parse_repo_arg(arg: str) -> dict:
     return {"owner": parts[0], "name": parts[1], "ref": ref}
 
 
-def load_repos_from_db(limit: int = 20) -> list[dict]:
+def load_repos_from_db(limit: int = 20, not_indexed_only: bool = False) -> list[dict]:
     """
     从 Supabase 读取有 tier-2 结果但尚未做 tier-3 深度分析的仓库。
+
+    not_indexed_only=True 时只保留 DeepWiki 未索引的仓库 —— 这是本 Agent 现在的定位:
+    tier-3 主路径已换成 scripts/10-deepwiki-deep.ts(基于全量索引,免费且快),
+    只有 DeepWiki 覆盖不到的仓库才值得付出「下载 tarball + 多轮采样」的代价。
     """
     try:
         import requests
@@ -98,9 +102,28 @@ def load_repos_from_db(limit: int = 20) -> list[dict]:
     resp.raise_for_status()
     tier3_ids = {r["repository_id"] for r in resp.json()}
 
-    candidate_ids = list(tier2_ids - tier3_ids)[:limit]
+    candidate_ids = tier2_ids - tier3_ids
+
+    # Step 3（兜底模式）: 只保留 DeepWiki 明确未索引的仓库。
+    # 注意用 indexed=eq.false 而不是「没有 deepwiki 行」—— 没有行只代表
+    # deepwiki 阶段还没跑到它，那种应该等主路径处理，不该在这里烧 token。
+    if not_indexed_only:
+        dw_url = (
+            f"{supabase_url}/rest/v1/deepwiki_analysis"
+            f"?indexed=eq.false&select=repository_id"
+        )
+        resp = requests.get(dw_url, headers=headers)
+        resp.raise_for_status()
+        not_indexed_ids = {r["repository_id"] for r in resp.json()}
+        candidate_ids &= not_indexed_ids
+        print(f"兜底模式: DeepWiki 未索引的候选 {len(candidate_ids)} 个")
+
+    candidate_ids = list(candidate_ids)[:limit]
     if not candidate_ids:
-        print("没有找到待分析的仓库（所有 tier-2 仓库均已有 tier-3 分析）。")
+        if not_indexed_only:
+            print("没有需要兜底的仓库（DeepWiki 已覆盖全部 tier-2 候选）。")
+        else:
+            print("没有找到待分析的仓库（所有 tier-2 仓库均已有 tier-3 分析）。")
         return []
 
     # 查询仓库信息
@@ -150,6 +173,11 @@ async def main():
         help="--from-db 模式下最多分析多少个仓库（默认 10）",
     )
     parser.add_argument(
+        "--not-indexed-only",
+        action="store_true",
+        help="兜底模式：--from-db 下只分析 DeepWiki 未索引的仓库",
+    )
+    parser.add_argument(
         "-o", "--output",
         help="输出文件路径（默认打印到 stdout）",
     )
@@ -168,10 +196,11 @@ async def main():
 
     # 确定要分析的仓库列表
     if args.from_db:
-        repos = load_repos_from_db(limit=args.limit)
+        repos = load_repos_from_db(limit=args.limit, not_indexed_only=args.not_indexed_only)
         if not repos:
+            # 兜底模式下「没有可分析的」是正常结果，不该让 CI 失败
             print("没有找到待分析的仓库。", file=sys.stderr)
-            sys.exit(1)
+            sys.exit(0 if args.not_indexed_only else 1)
     elif args.repos:
         repos = []
         for arg in args.repos:

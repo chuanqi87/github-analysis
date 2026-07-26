@@ -1,7 +1,8 @@
 // 管道编排器:pnpm pipeline --stage=<stage> [--limit=N] [--ids=1,2] [--force]
 //
 // stages: fetch-top | enrich | harmony-signals | fetch-readme | deepwiki | llm-classify
-//         | llm-evaluate | score | weekly-trending | build-registry | mark-archived | all
+//         | llm-evaluate | deepwiki-deep | score | weekly-trending | build-registry
+//         | mark-archived | all
 import 'dotenv/config';
 import { parseArgs, log, type StageOpts } from '@/scripts/_common';
 import { runFetchTop } from '@/scripts/01-fetch-top';
@@ -13,6 +14,7 @@ import { runLlmEvaluate } from '@/scripts/06-llm-evaluate';
 import { runScore } from '@/scripts/07-score';
 import { runMarkArchived } from '@/scripts/08-mark-archived';
 import { runDeepwiki } from '@/scripts/09-deepwiki';
+import { runDeepwikiDeep } from '@/scripts/10-deepwiki-deep';
 import { runWeeklyTrending } from '@/scripts/weekly-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
 
@@ -28,6 +30,8 @@ const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'build-registry': () => runBuildRegistry(),
   'mark-archived': runMarkArchived,
   deepwiki: runDeepwiki,
+  // tier-3 按需深挖,不进 FULL_ORDER/SYNC_ORDER
+  'deepwiki-deep': runDeepwikiDeep,
 };
 
 const FULL_ORDER = [
