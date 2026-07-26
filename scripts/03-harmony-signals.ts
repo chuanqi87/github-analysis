@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { loadRegistry } from '@/lib/harmony/registry';
 import { collectHarmonySignals, type HarmonyFileFlags } from '@/lib/harmony/signals';
+import { loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 
@@ -84,7 +85,9 @@ export async function runHarmonySignals(opts: StageOpts = {}): Promise<void> {
 
     const repos = await loadRepos(opts);
     const flags = await loadFileFlags(repos.map((r) => r.id));
-    log(`采集 ${repos.length} 个仓库的鸿蒙信号(含 GitCode 搜索)...`);
+    // DeepWiki 在本阶段之前跑,这里读它采到的代码级鸿蒙证据参与 auto_state_hint
+    const deepwiki = await loadDeepwikiMap(repos.map((r) => r.id));
+    log(`采集 ${repos.length} 个仓库的鸿蒙信号(含 GitCode 搜索 + DeepWiki 证据)...`);
 
     let done = 0;
     let gitcodeHits = 0;
@@ -97,6 +100,8 @@ export async function runHarmonySignals(opts: StageOpts = {}): Promise<void> {
           files,
           registry,
           repo.readme_text,
+          {},
+          deepwikiFor(deepwiki, repo.id),
         );
         done++;
         if (sig.gitcode_matched) gitcodeHits++;

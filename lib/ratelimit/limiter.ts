@@ -28,6 +28,13 @@ export const llmLimiter = new Bottleneck({
   minTime: 100,
 });
 
+// DeepWiki MCP:免费无鉴权,官方未公布限额。实测 16 并发无异常,
+// 但既然对方没承诺,就按 5 并发自我克制(ask_question 单次 7~14s,并发才是吞吐关键)。
+export const deepwikiLimiter = new Bottleneck({
+  maxConcurrent: 5,
+  minTime: 150,
+});
+
 /** 通用重试:指数退避 + 抖动;对 429/5xx/网络错误重试。 */
 export async function withRetry<T>(
   fn: () => Promise<T>,

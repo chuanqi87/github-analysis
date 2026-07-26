@@ -8,7 +8,7 @@ import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
 import { loadCategoryTree } from '@/lib/category/loader';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
-import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
+import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 
 async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
   const client = getAdminClient();
@@ -39,12 +39,17 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
 
     const ids = repos.map((r) => r.id);
     const signals = await loadSignalsMap(ids);
+    const deepwiki = await loadDeepwikiMap(ids);
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
 
     // 加载动态分类树(管道侧用 service_role,绕过 RLS)
     const adminClient = getAdminClient();
     const categoryTree = await loadCategoryTree(adminClient);
-    log(`tier-1 分类 ${repos.length} 个仓库(百炼),${categoryTree.length} 个分类节点…`);
+    const withFacts = repos.filter((r) => deepwikiFor(deepwiki, r.id)?.indexed).length;
+    log(
+      `tier-1 分类 ${repos.length} 个仓库(百炼),${categoryTree.length} 个分类节点` +
+        `,${withFacts} 个带 DeepWiki 模块地图…`,
+    );
 
     let skipped = 0;
     let analyzed = 0;
@@ -64,13 +69,14 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
           stars: repo.stars,
           license: repo.license,
         };
-        const hash = classifyInputHash(analyzeRepo, sig, repo.readme_text);
+        const facts = deepwikiFor(deepwiki, repo.id);
+        const hash = classifyInputHash(analyzeRepo, sig, repo.readme_text, facts);
         if (existing.get(repo.id) === hash) {
           skipped++;
           return;
         }
         try {
-          const out = await classifyRepo(analyzeRepo, sig, categoryTree, repo.readme_text);
+          const out = await classifyRepo(analyzeRepo, sig, categoryTree, repo.readme_text, facts);
 
           // 解析分类 slug → 数据库 ID,处理新分类提议
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);

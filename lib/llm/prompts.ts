@@ -2,12 +2,15 @@
 // p5: 状态判定改为按信号可信度分级的优先级表;评分维度加锚点标尺拉开区分度;
 //     强制证据引用与项目特定性,禁止万金油建议;README 实际清洗截断;
 //     tier-2 可注入品类适配统计以锚定 ecosystem_gap。
+// p6: 注入 DeepWiki 代码事实(模块地图 / 鸿蒙证据分级 / 平台抽象层 / 阻塞依赖),
+//     判定规则相应加入"构建矩阵命中不等于已适配"的反误判条款。
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
+import type { DeepwikiFacts } from '@/lib/deepwiki';
 import { isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
 import { formatCategoryList } from '@/lib/category/loader';
 
-export const PROMPT_VERSION = 'p5';
+export const PROMPT_VERSION = 'p6';
 
 /** tier-1 只看 README 头部;tier-2 看更长片段。 */
 export const README_CHARS_TIER1 = 2000;
@@ -35,7 +38,8 @@ const STATE_RULES = `## A. 适配状态判定(harmony_suggestion)——事实题
 
 1. 信号显示 ohpm 中心仓已上架 → **ADAPTED**
 2. 信号显示 GitCode **官方组织(标注 [强])** 存在适配仓 → **ADAPTED**
-3. 本仓库自带鸿蒙工程文件或 .ets 源码:README/描述明确宣称支持 HarmonyOS/OpenHarmony → **ADAPTED**;仅有文件无宣称 → **PARTIAL**
+3. 本仓库自带鸿蒙工程文件或 .ets 源码,或 DeepWiki 证据分级为 \`dedicated_port\`:
+   README/描述明确宣称支持 HarmonyOS/OpenHarmony → **ADAPTED**;仅有文件无宣称 → **PARTIAL**
 4. GitCode 搜索命中但**非官方组织(标注 [弱])** → **PARTIAL**(可能是镜像/个人试验仓,须在置信度上打折)
 5. 命中鸿蒙三方库底表 → **PARTIAL**
 6. 无以上信号:
@@ -45,7 +49,12 @@ const STATE_RULES = `## A. 适配状态判定(harmony_suggestion)——事实题
 硬性纪律:
 - **NOT_ADAPTED 不要输出**(它只是信号采集层的默认值)
 - **harmony_adapted_repo_url 只能填信号中给出的 URL,严禁自行构造或凭记忆猜测**;无信号则填 null
-- 判定与信号冲突时以信号为准;若 README 有反证(如"鸿蒙版已废弃"),在置信度中体现并说明`;
+- 判定与信号冲突时以信号为准;若 README 有反证(如"鸿蒙版已废弃"),在置信度中体现并说明
+- **反误判**:DeepWiki 证据分级为 \`build_target_only\`(鸿蒙只是构建/平台矩阵里的一项)或
+  \`incidental_mention\`(只在文档、注释、changelog、单条平台字符串比较里出现)时,
+  **不构成适配证据**,不得据此判 ADAPTED 或 PARTIAL。典型反例:某大型前端框架的
+  napi 产物列表里带一个 openharmony 目标,这只说明它的构建工具支持该 ABI,
+  不代表项目本身做过鸿蒙适配`;
 
 const SCORE_RUBRIC_BASE = `## B. 价值评估——分析题,用锚点标尺打分
 
@@ -87,7 +96,9 @@ const SCORE_RUBRIC_TIER2 = `
 const TIER2_OUTPUT_RULES = `
 ## tier-2 输出纪律(反泛泛而谈)
 
-- **adaptation_points**(最多 6 条):每条必须挂到该项目的具体模块/依赖/功能上,evidence 字段引用给定材料中的依据(README 原文短句、信号条目、依赖名)。**禁止**输出可套用于任何项目的通用条目("翻译 README"、"提供 ArkTS 示例"),除非项目本身就是文档/教程类
+- **adaptation_points**(最多 6 条):每条必须挂到该项目的具体模块/依赖/功能上,evidence 字段引用给定材料中的依据。
+  **有 DeepWiki 代码事实时优先引用其中的真实文件路径**(如"在 src/os_unix.c 同级新增 os_ohos.c"),
+  这比引 README 原文更有说服力;但**只能引材料里出现过的路径,不得自行拼造**
 - **recommended_approach**:指明具体技术路径与入手点(如"用 NAPI 封装 core/ 下的 C 解码模块,JS API 层可直接复用"),不写"建议评估后适配"这类空话
 - **reasoning** 按固定结构组织:①技术栈与平台耦合点 ②适配现状证据(引用信号/README)③推荐路径依据 ④关键风险(license/原生依赖/维护状态)
 - **harmony_adapted_repo_url**:同状态判定纪律,只能取自给定信号`;
@@ -185,10 +196,100 @@ function signalFacts(sig: CollectedSignals): string {
   return lines.join('\n');
 }
 
+/** 鸿蒙证据分级 → 给 LLM 的可判读说明(不直接给结论,给证据强度)。 */
+const SCOPE_LABEL: Record<string, string> = {
+  dedicated_port: '[强] 存在专门的鸿蒙实现(独立目录/ArkTS 源码/oh-package 工程)',
+  build_target_only: '[不构成适配] 鸿蒙仅作为构建或平台矩阵中的一项出现,无专门实现',
+  incidental_mention: '[不构成适配] 仅在文档/注释/changelog/单条平台字符串比较中被提及',
+  none: '未发现任何鸿蒙相关代码或配置',
+};
+
+/** DeepWiki 目录在 tier-1 的注入上限:控制 token,目录本身也就 1~3KB。 */
+const TOC_CHARS_TIER1 = 1200;
+
+/**
+ * DeepWiki 代码事实清单。
+ *
+ * 只呈现事实(路径、引文、依赖名、已有平台后端),不呈现 DeepWiki 自己的难度判断 ——
+ * 实测它的判断不可靠(sqlite 的 VFS 被判"无平台抽象层"),但它给的路径都是真的。
+ */
+function deepwikiFacts(facts: DeepwikiFacts, tier: 1 | 2): string {
+  if (!facts.indexed) {
+    return '(DeepWiki 未索引该仓库,无代码事实可用 —— confidence 相应降低,不要凭空推断代码结构)';
+  }
+
+  const lines: string[] = [];
+
+  if (facts.wiki_toc) {
+    const toc = tier === 1 ? facts.wiki_toc.slice(0, TOC_CHARS_TIER1) : facts.wiki_toc;
+    lines.push('### 模块地图', toc.trim(), '');
+  }
+
+  const h = facts.harmony;
+  if (h) {
+    lines.push('### 鸿蒙痕迹(代码级检索结果)');
+    lines.push(`- 证据分级:${h.harmony_scope ? SCOPE_LABEL[h.harmony_scope] ?? h.harmony_scope : '未知'}`);
+    if (h.harmony_paths.length) {
+      lines.push(`- 命中路径:${h.harmony_paths.slice(0, 10).join('、')}`);
+    }
+    if (h.harmony_quote) lines.push(`- 代码/文档原文:「${h.harmony_quote.slice(0, 200)}」`);
+    if (h.ohos_imports.length) lines.push(`- @ohos.* 引用:${h.ohos_imports.slice(0, 8).join('、')}`);
+    if (h.declares_harmony_support != null) {
+      lines.push(`- README/官方文档是否明确宣称支持鸿蒙:${h.declares_harmony_support ? '是' : '否'}`);
+    }
+    lines.push('');
+  }
+
+  const p = facts.porting;
+  if (p) {
+    lines.push('### 移植面(代码事实)');
+    if (p.project_type) lines.push(`- 项目形态:${p.project_type}`);
+    if (p.languages.length) lines.push(`- 语言构成:${p.languages.slice(0, 8).join('、')}`);
+    if (p.native_code_ratio != null) {
+      lines.push(`- 原生代码占比:约 ${Math.round(p.native_code_ratio * 100)}%`);
+    }
+    if (p.has_platform_abstraction != null) {
+      lines.push(
+        `- 是否已有平台抽象层:${p.has_platform_abstraction ? '是' : '否'}` +
+          (p.platform_layer_paths.length ? `(${p.platform_layer_paths.slice(0, 6).join('、')})` : ''),
+      );
+    }
+    if (p.existing_platform_backends.length) {
+      lines.push(
+        `- 已有平台后端:${p.existing_platform_backends.join('、')}` +
+          '(已有多个后端说明加一个鸿蒙后端有现成插槽,feasibility 应相应提高)',
+      );
+    }
+    if (p.portable_core_paths.length) {
+      lines.push(`- 无平台耦合的核心:${p.portable_core_paths.slice(0, 6).join('、')}`);
+    }
+    if (p.blocking_deps.length) {
+      lines.push(
+        `- 阻塞依赖:${p.blocking_deps
+          .slice(0, 8)
+          .map((d) => (d.why ? `${d.name}(${d.why})` : d.name))
+          .join('、')}`,
+      );
+    }
+    if (p.platform_apis_used.length) {
+      lines.push(`- 直接调用的系统 API:${p.platform_apis_used.slice(0, 8).join('、')}`);
+    }
+    if (p.conditional_compilation.length) {
+      lines.push(`- 平台条件编译宏:${p.conditional_compilation.slice(0, 8).join('、')}`);
+    }
+  }
+
+  const body = lines.join('\n').trim();
+  return body || '(DeepWiki 已索引但未取到有效事实)';
+}
+
 export function buildUserPrompt(
   repo: PromptRepo,
   sig: CollectedSignals,
   readme?: string | null,
+  /** DeepWiki 代码事实;缺省表示本次未取数(与"未索引"不同,不额外惩罚 confidence) */
+  facts?: DeepwikiFacts | null,
+  tier: 1 | 2 = 2,
 ): string {
   const meta = [
     `仓库:${repo.full_name}`,
@@ -206,6 +307,14 @@ export function buildUserPrompt(
     '## 已知鸿蒙信号(事实,harmony_suggestion 须按判定规则与之一致)',
     signalFacts(sig),
   ];
+
+  if (facts) {
+    parts.push(
+      '',
+      '## DeepWiki 代码事实(由代码索引得出,优先于 README 的自述)',
+      deepwikiFacts(facts, tier),
+    );
+  }
 
   if (readme) {
     parts.push('', '## README(已清洗截断)', readme);
