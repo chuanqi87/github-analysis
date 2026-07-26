@@ -5,6 +5,8 @@ export interface StageOpts {
   since?: string;
   force?: boolean;
   ids?: number[]; // 仅处理指定仓库 id(每日热点增量用)
+  /** deepwiki 阶段专用:取多少个仓库做定向提问(其余只取廉价的目录) */
+  evidenceLimit?: number;
 }
 
 export function log(msg: string): void {
@@ -32,6 +34,9 @@ export function parseArgs(argv: string[]): { stage?: string } & StageOpts {
         break;
       case 'ids':
         out.ids = (value ?? '').split(',').map(Number).filter((n) => Number.isFinite(n));
+        break;
+      case 'evidence-limit':
+        out.evidenceLimit = value ? Number(value) : undefined;
         break;
     }
   }

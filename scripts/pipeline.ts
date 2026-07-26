@@ -1,7 +1,8 @@
 // 管道编排器:pnpm pipeline --stage=<stage> [--limit=N] [--ids=1,2] [--force]
 //
-// stages: fetch-top | enrich | harmony-signals | fetch-readme | llm-classify
-//         | llm-evaluate | score | weekly-trending | build-registry | mark-archived | all
+// stages: fetch-top | enrich | harmony-signals | fetch-readme | deepwiki | llm-classify
+//         | llm-evaluate | deepwiki-deep | score | weekly-trending | build-registry
+//         | mark-archived | all
 import 'dotenv/config';
 import { parseArgs, log, type StageOpts } from '@/scripts/_common';
 import { runFetchTop } from '@/scripts/01-fetch-top';
@@ -12,6 +13,8 @@ import { runLlmClassify } from '@/scripts/05-llm-classify';
 import { runLlmEvaluate } from '@/scripts/06-llm-evaluate';
 import { runScore } from '@/scripts/07-score';
 import { runMarkArchived } from '@/scripts/08-mark-archived';
+import { runDeepwiki } from '@/scripts/09-deepwiki';
+import { runDeepwikiDeep } from '@/scripts/10-deepwiki-deep';
 import { runWeeklyTrending } from '@/scripts/weekly-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
 
@@ -26,12 +29,17 @@ const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'weekly-trending': runWeeklyTrending,
   'build-registry': () => runBuildRegistry(),
   'mark-archived': runMarkArchived,
+  deepwiki: runDeepwiki,
+  // tier-3 按需深挖,不进 FULL_ORDER/SYNC_ORDER
+  'deepwiki-deep': runDeepwikiDeep,
 };
 
 const FULL_ORDER = [
   'fetch-top',
   'enrich',
   'build-registry',
+  // 代码事实采集:必须在 harmony-signals 之前,鸿蒙证据要参与 auto_state_hint 汇总
+  'deepwiki',
   'harmony-signals',
   'fetch-readme',
   'mark-archived',   // 在 LLM 分析之前标记归档,避免浪费 token
@@ -46,6 +54,8 @@ const SYNC_ORDER = [
   'fetch-top',
   'enrich',
   'build-registry',
+  // DeepWiki 不烧 token,且幂等键挂 pushed_at,同步模式下只会为新增/有新提交的仓库取数
+  'deepwiki',
   'harmony-signals',
   'fetch-readme',
   'mark-archived',

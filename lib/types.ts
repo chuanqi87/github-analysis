@@ -87,6 +87,46 @@ export const HARMONY_STATE_LABELS: Record<HarmonyState, string> = {
   NOT_APPLICABLE: '不适用',
 };
 
+// ---- DeepWiki 代码事实(见 supabase/migrations/0013_deepwiki.sql)------------
+
+/**
+ * 鸿蒙痕迹的证据强度分级。
+ *
+ * 这个四分法是防误判的关键,不要退化成 boolean:
+ * 某大型前端框架的 napi 产物列表里带一个 openharmony 目标,只说明它的构建工具
+ * 支持该 ABI,不代表项目做过鸿蒙适配 —— 那是 build_target_only,不是适配。
+ */
+export const HARMONY_SCOPES = [
+  'dedicated_port',
+  'build_target_only',
+  'incidental_mention',
+  'none',
+] as const;
+export type HarmonyScope = (typeof HARMONY_SCOPES)[number];
+
+export const HARMONY_SCOPE_LABELS: Record<HarmonyScope, string> = {
+  dedicated_port: '有专门的鸿蒙实现',
+  build_target_only: '仅构建目标中提及',
+  incidental_mention: '仅文档中偶然提及',
+  none: '未发现鸿蒙痕迹',
+};
+
+/** 一条结论背后的证据强度,只用于如实标注,不参与评分。 */
+export const EVIDENCE_LEVELS = ['wiki', 'toc', 'readme', 'none'] as const;
+export type EvidenceLevel = (typeof EVIDENCE_LEVELS)[number];
+
+export const EVIDENCE_LEVEL_LABELS: Record<EvidenceLevel, string> = {
+  wiki: '代码级证据',
+  toc: '模块结构',
+  readme: '仅 README',
+  none: '无证据',
+};
+
+export interface BlockingDep {
+  name: string;
+  why: string;
+}
+
 // ---- 数据库行类型 -----------------------------------------------------------
 
 export interface RepositoryRow {

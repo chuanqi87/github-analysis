@@ -11,6 +11,7 @@ import {
 } from '@/lib/llm/prompts';
 import { llmLimiter, withRetry } from '@/lib/ratelimit/limiter';
 import { stableHash } from '@/lib/hash';
+import { deepwikiFingerprint, type DeepwikiFacts } from '@/lib/deepwiki';
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 
@@ -47,6 +48,7 @@ export function classifyInputHash(
   repo: AnalyzeRepo,
   sig: CollectedSignals,
   readme: string | null,
+  facts?: DeepwikiFacts | null,
 ): string {
   const head = prepareReadme(readme, README_CHARS_TIER1);
   return stableHash({
@@ -59,6 +61,7 @@ export function classifyInputHash(
     topics: [...repo.topics].sort(),
     sig: signalFingerprint(sig),
     readme: head ? stableHash(head) : null,
+    dw: deepwikiFingerprint(facts),
   });
 }
 
@@ -67,6 +70,7 @@ export async function classifyRepo(
   sig: CollectedSignals,
   categoryTree: CategoryTreeNode[],
   readme: string | null,
+  facts?: DeepwikiFacts | null,
 ): Promise<LlmOutput<ClassifyResult>> {
   const result = await withRetry(
     () =>
@@ -77,7 +81,7 @@ export async function classifyRepo(
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
           system: systemPrompt(1, categoryTree),
-          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER1)),
+          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER1), facts, 1),
           maxRetries: 1,
         }),
       ),
@@ -86,7 +90,7 @@ export async function classifyRepo(
   const usage = result.usage as Record<string, number> | undefined;
   return {
     data: result.object,
-    input_hash: classifyInputHash(repo, sig, readme),
+    input_hash: classifyInputHash(repo, sig, readme, facts),
     tokens_in: usage?.promptTokens ?? usage?.inputTokens ?? null,
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: CLASSIFY_MODEL_NAME,

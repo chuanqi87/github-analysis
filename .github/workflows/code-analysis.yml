@@ -1,21 +1,31 @@
 name: code-analysis
 
-# 代码深度分析：下载仓库源码，用 Agent 实际阅读代码后评估鸿蒙化可行性。
-# 分析结果自动写入 Supabase（tier=3），前端可直接查看。
+# tier-3 深度分析：评估仓库鸿蒙化的可行性与路径，结果写入 Supabase（tier=3）。
+#
+# 两条路径，主次分明：
+#   1. deepwiki-deep（主）—— 基于 DeepWiki 全量代码索引逐子系统问询 + 一次结构化定级。
+#      免费、约 15s/仓，覆盖绝大多数高星仓库。
+#   2. tarball-fallback（兜底）—— 只对 DeepWiki 未索引的仓库，下载源码用 Agent 实际阅读。
+#      慢且烧 token，所以严格限定在主路径覆盖不到的仓库上。
 
 on:
   workflow_dispatch:
     inputs:
       repos:
-        description: '仓库列表（逗号分隔，如 facebook/react,vuejs/core）'
+        description: '仓库列表（逗号分隔，如 facebook/react,vuejs/core）。留空则从 Supabase 取 top-N'
         required: false
         default: ''
       limit:
-        description: '--from-db 模式下分析多少个仓库'
+        description: '分析多少个仓库'
         required: false
-        default: '20'
+        default: '30'
+      skip_fallback:
+        description: '跳过 tarball 兜底（只跑 DeepWiki 主路径）'
+        required: false
+        type: boolean
+        default: false
       model:
-        description: '分析模型（默认 qwen3-max）'
+        description: 'tarball 兜底使用的分析模型'
         required: false
         default: 'qwen3-max'
   schedule:
@@ -26,7 +36,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  analyze:
+  # ── 主路径：DeepWiki 深度问询 ────────────────────────────────────────────
+  deepwiki-deep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run DeepWiki deep analysis
+        run: pnpm pipeline --stage=deepwiki-deep --limit=${{ github.event.inputs.limit || '30' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## 🔎 tier-3 深度分析（DeepWiki 主路径）" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "未被 DeepWiki 索引的仓库会在下一个 job 走 tarball 兜底。" >> $GITHUB_STEP_SUMMARY
+
+  # ── 兜底：只处理 DeepWiki 未索引的仓库 ───────────────────────────────────
+  tarball-fallback:
+    needs: deepwiki-deep
+    if: ${{ github.event.inputs.skip_fallback != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -48,22 +93,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r scripts/agent/requirements.txt
 
-      - name: Run code analysis agent
-        id: analyze
+      - name: Run tarball agent on DeepWiki-uncovered repos
         run: |
           if [ -n "${{ github.event.inputs.repos }}" ]; then
-            # 手动指定仓库
+            # 手动指定仓库：不加 --not-indexed-only，按用户要求原样分析
             REPOS=$(echo "${{ github.event.inputs.repos }}" | tr ',' ' ')
             echo "🔍 分析指定仓库: $REPOS"
             python scripts/agent/run.py $REPOS -v --write-db -o analysis-results.json
           else
-            # 从 Supabase 读取待分析仓库
-            echo "🔍 从 Supabase 读取待分析仓库 (limit=${{ github.event.inputs.limit || '20' }})"
-            python scripts/agent/run.py --from-db --limit ${{ github.event.inputs.limit || '20' }} -v --write-db -o analysis-results.json
+            echo "🔍 兜底：只分析 DeepWiki 未索引的仓库"
+            python scripts/agent/run.py --from-db --not-indexed-only \
+              --limit ${{ github.event.inputs.limit || '30' }} \
+              -v --write-db -o analysis-results.json
           fi
 
       - name: Upload results artifact
-        if: always()
+        if: always() && hashFiles('analysis-results.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: code-analysis-results
@@ -73,7 +118,7 @@ jobs:
       - name: Print summary
         if: always()
         run: |
-          echo "## 📊 代码深度分析结果" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 tier-3 兜底分析（tarball Agent）" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f analysis-results.json ]; then
             python3 -c "
@@ -97,5 +142,5 @@ jobs:
                   print(f'| {owner}/{name} | {harmony} | {feasibility} | {effort} | {category} | {approach} |')
           " >> $GITHUB_STEP_SUMMARY || echo "结果解析失败" >> $GITHUB_STEP_SUMMARY
           else
-            echo "未生成结果文件" >> $GITHUB_STEP_SUMMARY
+            echo "无需兜底：DeepWiki 已覆盖全部候选仓库。" >> $GITHUB_STEP_SUMMARY
           fi

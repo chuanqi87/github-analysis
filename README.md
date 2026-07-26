@@ -46,6 +46,7 @@ daily-trending(每日)                harmony_overrides(人工)  ◀──   /ad
 | `DASHSCOPE_MODEL` / `DASHSCOPE_MODEL_DEEP` | 模型名 | Variable(可选) |
 | `GITHUB_TOKEN` / `GH_PAT` | 抓取配额 | Secret(可选) |
 | `NEXT_PUBLIC_ADMIN_EMAIL` | 管理台邮箱校验 | Variable(deploy) + .env |
+| `NEXT_PUBLIC_DEEPWIKI_BASE` | DeepWiki 站点地址(可选,默认 https://deepwiki.com) | Variable(deploy) + .env |
 | `NEXT_PUBLIC_BASE_PATH` | Pages 子路径 | deploy workflow 自动注入 |
 
 ## 本地运行
@@ -63,14 +64,19 @@ pnpm pipeline --stage=llm-classify --force      # 单阶段 / 强制重算
 pnpm pipeline --stage=daily-trending            # 每日热点
 ```
 
-管道阶段:`fetch-top → enrich → build-registry → harmony-signals → fetch-readme → llm-classify → llm-evaluate → score`,`--stage=all` 顺序执行。`--limit=N` 取 top N;`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
+管道阶段:`fetch-top → enrich → build-registry → deepwiki → harmony-signals → fetch-readme → mark-archived → llm-classify → llm-evaluate → score`,`--stage=all` 顺序执行。`--limit=N` 取 top N;`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
+
+`deepwiki` 阶段从 [DeepWiki](https://deepwiki.com) 拉取代码级事实(模块地图、鸿蒙痕迹、平台抽象层、阻塞依赖),免费且不烧 token,让后续 LLM 阶段基于真实代码结构判断而非靠 README 猜。`--evidence-limit=N` 控制多少个仓库做定向提问(默认 200,其余只取廉价的模块地图)。
+
+`deepwiki-deep` 是 tier-3 深度评估(逐子系统问询 + 一次结构化定级),按需触发,不在 `--stage=all` 里。
 
 ### 推荐的 MVP 验证顺序(先小切片)
 1. `--stage=fetch-top --limit=500` → `--stage=enrich --limit=500`
 2. `--stage=build-registry` + `--stage=harmony-signals --limit=500`,抽查 axios / lottie 等已知已适配项目信号是否命中。
-3. `--stage=fetch-readme --limit=500` + `--stage=llm-classify --limit=500`,验证百炼分类质量。
-4. 打开 `/admin` 登录标记几条,确认看板即时更新(人工权威闭环)。
-5. `--stage=llm-evaluate --limit=100` + `--stage=score`,人工看 top 50 排序是否符合直觉,再放大到全量。
+3. `--stage=deepwiki --limit=500`,抽查 `Tencent/MMKV` 应为 `dedicated_port`、`vercel/next.js` 应为 `build_target_only`(不构成适配)。
+4. `--stage=fetch-readme --limit=500` + `--stage=llm-classify --limit=500`,验证百炼分类质量。
+5. 打开 `/admin` 登录标记几条,确认看板即时更新(人工权威闭环)。展开行可看到 DeepWiki 的代码证据。
+6. `--stage=llm-evaluate --limit=100` + `--stage=score`,人工看 top 50 排序是否符合直觉,再放大到全量。
 
 ## 部署到 GitHub Pages
 
