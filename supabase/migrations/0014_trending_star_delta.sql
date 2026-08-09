@@ -13,31 +13,47 @@
 -- forks 同理。
 -- ============================================================================
 
-alter table trending_snapshots add column if not exists stars_delta integer;
-alter table trending_snapshots add column if not exists forks_delta integer;
+-- 建列 + 回填放在同一个「首次执行」守卫里。
+--
+-- 注意:scripts/db-migrate.ts 没有 schema_migrations 记账表,每次 `pnpm db:migrate`
+-- 都会把 supabase/migrations/*.sql **全部重跑一遍**。DDL 靠 `if not exists` 幂等即可,
+-- 但本迁移的回填是一次性数据搬运:重复执行会把历史快照里已经正确的 stars
+-- 再次覆盖成 repositories 的当前总量(甚至把管道刚写好的增量搬错位)。
+-- 所以用「stars_delta 列是否已存在」作为一次性标记 —— 列已在就整段跳过。
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'trending_snapshots'
+      and column_name = 'stars_delta'
+  ) then
+    raise notice '0014: stars_delta 已存在,跳过建列与回填';
+  else
+    execute 'alter table trending_snapshots add column stars_delta integer';
+    execute 'alter table trending_snapshots add column forks_delta integer';
 
--- ---- 历史数据回填 ----------------------------------------------------------
--- 1. 旧的 stars/forks 实际是周期增量,平移到 delta 列。
-update trending_snapshots
-set stars_delta = stars
-where stars_delta is null and stars is not null;
+    -- 1. 旧的 stars/forks 实际是周期增量,平移到 delta 列,并把总量列清空待填。
+    execute $sql$
+      update trending_snapshots
+      set stars_delta = stars,
+          forks_delta = forks,
+          stars = null,
+          forks = null
+      where stars is not null or forks is not null
+    $sql$;
 
-update trending_snapshots
-set forks_delta = forks
-where forks_delta is null and forks is not null;
-
--- 2. stars/forks 改存总量:能关联到 repositories 的取当前总量(历史行只能近似),
---    关联不上的置空 —— 宁可显示「-」也不要继续展示语义错误的数字。
-update trending_snapshots ts
-set stars = r.stars,
-    forks = r.forks
-from repositories r
-where ts.repository_id = r.id;
-
-update trending_snapshots
-set stars = null,
-    forks = null
-where repository_id is null;
+    -- 2. 总量从 repositories 取当前值(历史行只能近似,追溯不到当时的快照总量);
+    --    关联不上 repository_id 的行保持 null —— 宁可显示「-」也不要继续展示语义错误的数字。
+    execute $sql$
+      update trending_snapshots ts
+      set stars = r.stars,
+          forks = r.forks
+      from repositories r
+      where ts.repository_id = r.id
+    $sql$;
+  end if;
+end $$;
 
 comment on column trending_snapshots.stars is '仓库当前总 star 数(GitHub GraphQL stargazerCount);未能解析时为 null';
 comment on column trending_snapshots.stars_delta is '该快照周期(近一周)内新增的 star 数';
