@@ -190,7 +190,14 @@ export interface TrendingRow {
   repository_id: number | null;
   primary_language: string | null;
   description: string | null;
+  /** 仓库当前总 star 数 */
   stars: number | null;
+  /** 本周(快照周期内)新增 star 数 */
+  stars_delta: number | null;
+  /** 仓库当前总 fork 数 */
+  forks: number | null;
+  /** 本周新增 fork 数 */
+  forks_delta: number | null;
   total_score: number | null;
   rank: number | null;
   // 以下字段由 fetchTrending 关联 repo_board 填充

@@ -7,6 +7,44 @@ import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import NotConfigured from '@/components/NotConfigured';
 
+/** 紧凑计数:1234 → 1.2k */
+function formatCount(v: number | null | undefined): string {
+  if (v == null) return '-';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '-';
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString();
+}
+
+/** 本周新增 star:带符号,和总量区分开 */
+function StarDelta({ v, size = 13 }: { v: number | null | undefined; size?: number }) {
+  if (v == null) return <Typography.Text type="secondary">-</Typography.Text>;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n === 0) return <Typography.Text type="secondary">-</Typography.Text>;
+  return (
+    <Typography.Text strong style={{ color: n > 0 ? '#52c41a' : '#999', fontSize: size }}>
+      {n > 0 ? '+' : ''}
+      {n.toLocaleString()}
+    </Typography.Text>
+  );
+}
+
+/** 快照周期(周一)→ 该周的起止日期,用于表头说明「近一周」到底是哪一周 */
+function weekRange(monday: string): string {
+  const start = new Date(`${monday}T00:00:00Z`);
+  if (Number.isNaN(start.getTime())) return monday;
+  const end = new Date(start.getTime() + 6 * 86400_000);
+  return `${monday} ~ ${end.toISOString().slice(0, 10)}`;
+}
+
+/** 该快照是否就是当前这一周(UTC 周一为界) */
+function isCurrentWeek(monday: string): boolean {
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dow = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1));
+  return d.toISOString().slice(0, 10) === monday;
+}
+
 function TrendingCard({ r }: { r: TrendingRow }) {
   const colors = ['gold', 'silver', '#cd7f32'];
   return (
@@ -48,9 +86,21 @@ function TrendingCard({ r }: { r: TrendingRow }) {
           )}
         </Flex>
         <Flex align="center" justify="space-between" style={{ marginTop: 6 }}>
-          <Typography.Text strong style={{ color: '#faad14', fontSize: 13 }}>
-            ⭐ {r.stars != null ? (r.stars >= 1000 ? `${(r.stars / 1000).toFixed(1)}k` : r.stars.toLocaleString()) : '-'}
-          </Typography.Text>
+          <Space size={10}>
+            <Tooltip title="仓库总 star 数">
+              <Typography.Text strong style={{ color: '#faad14', fontSize: 13 }}>
+                ⭐ {formatCount(r.stars)}
+              </Typography.Text>
+            </Tooltip>
+            <Tooltip title="本周新增 star 数">
+              <span>
+                <StarDelta v={r.stars_delta} />
+                <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 2 }}>
+                  本周
+                </Typography.Text>
+              </span>
+            </Tooltip>
+          </Space>
           <Space size={8}>
             {r.weeks_on_trending != null && r.weeks_on_trending > 0 && (
               <Tag color={r.weeks_on_trending >= 4 ? 'red' : r.weeks_on_trending >= 2 ? 'orange' : 'default'}>
@@ -136,15 +186,20 @@ export default function TrendingPage() {
     <Spin spinning={loading}>
       <Card
         title={
-          <span>
-            每周热点趋势{' '}
-            {date && <Typography.Text type="secondary">(本周: {date})</Typography.Text>}
-            {rows.length > 0 && (
-              <Tag color="orange" style={{ marginLeft: 8 }}>
-                Top {rows.length}
-              </Tag>
+          <Space wrap size={8}>
+            <span>每周热点趋势</span>
+            {date && (
+              <Typography.Text type="secondary" style={{ fontWeight: 400 }}>
+                统计周期 {weekRange(date)}
+              </Typography.Text>
             )}
-          </span>
+            {date && !isCurrentWeek(date) && (
+              <Tooltip title="最新一份快照不是本周的,可能是每周 workflow 尚未运行">
+                <Tag color="warning">非本周数据</Tag>
+              </Tooltip>
+            )}
+            {rows.length > 0 && <Tag color="orange">Top {rows.length}</Tag>}
+          </Space>
         }
       >
         {!loading && rows.length === 0 ? (
@@ -289,22 +344,33 @@ export default function TrendingPage() {
                   },
                 },
                 {
-                  title: 'Star',
+                  title: (
+                    <Tooltip title="仓库当前的总 star 数">
+                      <span>Star 总数</span>
+                    </Tooltip>
+                  ),
                   dataIndex: 'stars',
-                  width: 100,
+                  width: 110,
                   sorter: (a, b) => (a.stars ?? 0) - (b.stars ?? 0),
-                  render: (v) => {
-                    if (v == null) return '-';
-                    const num = Number(v);
-                    const formatted = num >= 1000 
-                      ? `${(num / 1000).toFixed(1)}k` 
-                      : num.toLocaleString();
-                    return (
+                  render: (v) =>
+                    v == null ? (
+                      '-'
+                    ) : (
                       <Typography.Text strong style={{ color: '#faad14' }}>
-                        ⭐ {formatted}
+                        ⭐ {formatCount(Number(v))}
                       </Typography.Text>
-                    );
-                  },
+                    ),
+                },
+                {
+                  title: (
+                    <Tooltip title="本周(快照周期内)新增的 star 数,来自 GitHub Trending / OSS Insight 的近一周统计">
+                      <span>本周新增</span>
+                    </Tooltip>
+                  ),
+                  dataIndex: 'stars_delta',
+                  width: 110,
+                  sorter: (a, b) => (a.stars_delta ?? 0) - (b.stars_delta ?? 0),
+                  render: (v) => <StarDelta v={v as number | null} size={14} />,
                 },
                 {
                   title: '上榜周数',
