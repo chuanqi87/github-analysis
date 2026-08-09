@@ -81,6 +81,7 @@ pnpm db:migrate                            # 执行 supabase/migrations/
 - **百炼 qwen 思考模型**:[lib/llm/provider.ts](lib/llm/provider.ts) 注入 `enable_thinking:false`(思考模式下不支持 tool_choice 且 JSON 约 1/3 不合 schema)。改 LLM 调用勿破坏这点。
 - **分类体系已迁移到 `categories` 表**(动态二级分类);`lib/types.ts` 里 `REPO_CATEGORIES`/`CATEGORY_LABELS` 及 `analysis.category` 枚举列均为 `@deprecated` 过渡兼容,新代码走 `CategoryRow`/`categories` 表 + `lib/category/loader.ts`。
 - **归档判定**:超过 3 年无 commit 判 `stale_repository`;归档仓库在 LLM 阶段前被 `mark-archived` 跳过以省 token。
+- **热点榜的 star 有两个语义,别混**:OSS Insight `/v1/trends/repos` 的 `stars`/`forks` 列是**周期内增量**(past_week 即近一周新增),不是总量;GitHub Trending 页面两个数都有(`a[href$="/stargazers"]` 是总量,`N stars this week` 是增量)。`trending_snapshots.stars` 存**总量**(统一由 `batchEnrich` 的 `stargazerCount` 覆盖),`stars_delta` 存**近一周增量**。曾经把 OSS Insight 的增量当总量写进 `stars`,看板上出现「216 ⭐」这种明显偏小的数字。
 - **改评分权重不需要跑 LLM**:改 `lib/scoring/priority.ts` 后 `--stage=score` 即可,别重跑 classify/evaluate。
 - **DeepWiki 别用 `read_wiki_contents`**:实测小项目(`sindresorhus/ky`)就返回 **685KB**,喂不进 LLM。只用 `read_wiki_structure`(~2KB/~1s)和 `ask_question`(5~9KB/7~14s)。
 - **`harmony_scope` 四分法不能退化成 boolean**:`dedicated_port` 才是适配证据;`build_target_only`(鸿蒙只是构建矩阵里一项)和 `incidental_mention`(只在文档注释里出现)**不构成适配**,`decideHint` 与 prompt 判定表里都有对应的反误判条款。删掉这个区分就会复现 next.js 被判 ADAPTED 的问题。
