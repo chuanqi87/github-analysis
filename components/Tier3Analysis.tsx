@@ -222,6 +222,21 @@ export default function Tier3Analysis({ repositoryId }: Props) {
                   <div style={{ flex: 1 }}>
                     <Text strong>{ap.area}</Text>
                     <Paragraph style={{ margin: '4px 0 0' }}>{ap.description}</Paragraph>
+                    {ap.harmony_value && (
+                      <Paragraph style={{ margin: '4px 0 0' }}>
+                        <Text strong>鸿蒙生态契合：</Text>{ap.harmony_value}
+                      </Paragraph>
+                    )}
+                    {ap.project_assets && (
+                      <Paragraph style={{ margin: '4px 0 0' }}>
+                        <Text strong>可复用资产：</Text>{ap.project_assets}
+                      </Paragraph>
+                    )}
+                    <Space size={[4, 4]} wrap>
+                      {ap.integration_form && <Tag color="blue">{ap.integration_form}</Tag>}
+                      {ap.target_devices?.map((device) => <Tag key={device}>{device}</Tag>)}
+                      {ap.target_kits?.map((kit) => <Tag key={kit} color="cyan">{kit}</Tag>)}
+                    </Space>
                     {ap.evidence && (
                       <Paragraph
                         code

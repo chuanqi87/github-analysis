@@ -1,15 +1,15 @@
 # 鸿蒙生态适配分析看板
 
-分析 GitHub 上 **Star ≥ 10000** 的项目(约 5,370 个)以及**每日热点项目**,对每个项目产出:分类、鸿蒙(HarmonyOS / OpenHarmony)适配点、当前鸿蒙化状态、**适配价值优先级评分**,并给出「最适合快速做鸿蒙化适配」的排序榜单。鸿蒙化状态由你在管理台**逐个人工审核标记**,自动信号仅作辅助。
+分析 GitHub 上 **Star ≥ 10000** 的基线项目以及**多源日榜/周榜热点项目**,通过持久候选池完成“发现 → 初筛 → 高价值深评 → 代码级深析 → 热点持续监控”。每个深评项目会明确输出“项目可复用资产 × 鸿蒙生态价值 × 目标设备 × 官方 Kit/API × 交付形态 × 代码证据”。鸿蒙化状态由管理台人工审核标记,自动信号仅作辅助。
 
 ## 架构:完全 GitHub 闭环 + Supabase 后端
 
 ```
 GitHub Actions(计算)                Supabase(数据 + Auth)          GitHub Pages(展示)
 ─────────────────────────           ────────────────────           ────────────────────
-fetch-top → enrich → signals   ──▶  Postgres 表 / 视图        ◀──   Next.js 静态站点
-→ readme → LLM 分析 → score          RLS 公开只读                    (antd + ProComponents)
-daily-trending(每日)                harmony_overrides(人工)  ◀──   /admin 登录后直接写
+baseline + 4-source trending  ──▶  analysis_queue 候选池      ◀──   Next.js 静态站点
+→ tier1(400) → tier2(100)            analysis / daily_metrics          (antd + ProComponents)
+→ tier3(20) → score                  harmony_overrides(人工)  ◀──   /admin 登录后直接写
 ```
 
 - **计算**:GitHub Actions 跑管道脚本(service-role key 写库)。
@@ -61,10 +61,15 @@ pnpm dev            # http://localhost:3000
 pnpm pipeline --stage=build-registry            # 验证鸿蒙底表解析
 pnpm pipeline --stage=all --limit=500           # MVP 切片:全流程 top 500
 pnpm pipeline --stage=llm-classify --force      # 单阶段 / 强制重算
-pnpm pipeline --stage=daily-trending            # 每日热点
+pnpm pipeline --stage=daily                     # 每日分层分析(默认 400/100/20)
+pnpm pipeline --stage=daily --preliminary-limit=50 --deep-limit=10 --tier3-limit=2
+pnpm pipeline --stage=weekly-trending            # 单独刷新多源热点
+pnpm pipeline --stage=refresh-pool               # 重建候选池派生状态
 ```
 
-管道阶段:`fetch-top → enrich → build-registry → deepwiki → harmony-signals → fetch-readme → mark-archived → llm-classify → llm-evaluate → score`,`--stage=all` 顺序执行。`--limit=N` 取 top N;`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
+推荐使用 `--stage=daily`。它先完成基线与热点发现，再从 `analysis_queue` 选取尚未完成当前层级的项目；已分析项目不会占住每日名额。默认预算为 tier-1 初筛 400、tier-2 深评 100、tier-3 代码深析 20，可分别用 `--preliminary-limit`、`--deep-limit`、`--tier3-limit` 调整。积压清空后，只有仍处热点且代码有变化的项目会重新入池。
+
+旧全量管道仍可用:`fetch-top → enrich → build-registry → deepwiki → harmony-signals → fetch-readme → mark-archived → llm-classify → llm-evaluate → score`。`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
 
 `deepwiki` 阶段从 [DeepWiki](https://deepwiki.com) 拉取代码级事实(模块地图、鸿蒙痕迹、平台抽象层、阻塞依赖),免费且不烧 token,让后续 LLM 阶段基于真实代码结构判断而非靠 README 猜。`--evidence-limit=N` 控制多少个仓库做定向提问(默认 200,其余只取廉价的模块地图)。
 
@@ -82,7 +87,7 @@ pnpm pipeline --stage=daily-trending            # 每日热点
 
 1. 推送到 GitHub;Settings → Pages → Source 选 **GitHub Actions**。
 2. 配置仓库 Secrets:`NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`DASHSCOPE_API_KEY`(及可选 `GH_PAT`);Variables:`NEXT_PUBLIC_ADMIN_EMAIL`(及可选模型名)。
-3. `deploy-pages` workflow 在 push 时自动构建部署;`analyze-full`(手动/每周)与 `analyze-daily`(每日)负责数据。
+3. `deploy-pages` 在 push 时构建部署；`analyze-full.yml` 实际执行每日分层分析，`analyze-daily.yml` 每周校准热点、归档状态和全局评分。
 4. 每日 workflow 会顺带给 Supabase 免费项目保活(避免 7 天闲置暂停)。
 
 ## 适配价值评分模型

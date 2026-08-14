@@ -379,6 +379,33 @@ export interface PipelineRun {
   finished_at: string | null;
 }
 
+export interface DailyPipelineMetric {
+  metric_date: string;
+  repositories_total: number;
+  discovered_today: number;
+  preliminary_today: number;
+  deep_today: number;
+  tier3_today: number;
+  trending_collected: number;
+  trending_promoted: number;
+  preliminary_backlog: number;
+  deep_backlog: number;
+  tier3_backlog: number;
+  failed_count: number;
+  updated_at: string;
+}
+
+export async function fetchDailyPipelineMetrics(limit = 14): Promise<DailyPipelineMetric[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from('pipeline_daily_metrics')
+    .select('*')
+    .order('metric_date', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DailyPipelineMetric[];
+}
+
 export async function fetchPipelineRuns(limit = 20): Promise<PipelineRun[]> {
   const sb = getSupabase();
   const { data, error } = await sb

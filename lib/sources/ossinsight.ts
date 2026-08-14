@@ -40,7 +40,10 @@ export async function fetchTrending(
 ): Promise<TrendingItem[]> {
   const url = `https://api.ossinsight.io/v1/trends/repos/?period=${period}&language=${encodeURIComponent(language)}`;
   return withRetry(async () => {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+    });
     if (!res.ok) throw new Error(`OSS Insight ${res.status}`);
     const json = (await res.json()) as OssInsightEnvelope;
     const rows = json.data?.rows ?? [];

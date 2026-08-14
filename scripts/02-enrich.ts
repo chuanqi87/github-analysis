@@ -10,6 +10,8 @@ interface RepoRef {
   full_name: string;
   owner: string;
   name: string;
+  is_archived: boolean;
+  archived_reason: string | null;
 }
 
 // PostgREST 单次查询硬上限 1000 行,全量刷新必须 range 分页。
@@ -17,7 +19,7 @@ const PAGE_SIZE = 1000;
 
 async function loadRepos(opts: StageOpts): Promise<RepoRef[]> {
   const client = getAdminClient();
-  const selectStr = 'id, full_name, owner, name';
+  const selectStr = 'id, full_name, owner, name, is_archived, archived_reason';
   // ids 模式:候选集小(每日热点),单次查询即可
   if (opts.ids?.length) {
     const { data, error } = await client
@@ -67,6 +69,7 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
       const ref = byFullName.get(e.full_name);
       if (!ref) continue;
       const isArchived = e.is_archived;
+      const derivedArchived = ref.is_archived && ref.archived_reason !== 'github_archived';
       if (isArchived) archivedCount++;
       repoUpdates.push({
         id: ref.id,
@@ -83,9 +86,9 @@ export async function runEnrich(opts: StageOpts = {}): Promise<void> {
         repo_created_at: e.repo_created_at,
         topics: e.topics,
         latest_release_at: e.latest_release_at,
-        is_archived: isArchived,
-        // 仅当 GitHub 标记归档时才更新 reason,避免覆盖 readme 检测结果
-        archived_reason: isArchived ? 'github_archived' : undefined,
+        // GitHub 未归档不代表项目不是 README deprecated/stale，保留已有派生状态。
+        is_archived: isArchived || derivedArchived,
+        archived_reason: isArchived ? 'github_archived' : (derivedArchived ? ref.archived_reason : null),
       });
       signalUpdates.push({
         repository_id: ref.id,

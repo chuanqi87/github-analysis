@@ -42,6 +42,7 @@ export async function fetchGithubTrending(
   return withRetry(async () => {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'harmony-adapt-analytics', Accept: 'text/html' },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`GitHub Trending ${res.status}`);
     const html = await res.text();

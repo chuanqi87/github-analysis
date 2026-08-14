@@ -1,7 +1,6 @@
-name: analyze-weekly
+name: analyze-weekly-reconciliation
 
-# 每周热点:抓取 trending → 落库 → 补齐新仓 → 增量鸿蒙分析。
-# 顺带对 Supabase 免费项目保活(避免 7 天闲置暂停)。
+# 每周校准:再次采集多周期热点、刷新归档状态与全局评分。
 on:
   schedule:
     - cron: '0 20 * * 1' # 每周一 20:00 UTC
@@ -32,5 +31,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run weekly trending
+      - name: Refresh weekly trending evidence
         run: pnpm pipeline --stage=weekly-trending
+      - name: Reconcile archived repositories
+        run: pnpm pipeline --stage=mark-archived
+      - name: Refresh global ranking
+        run: pnpm pipeline --stage=score

@@ -90,6 +90,8 @@ async function loadVelocity(): Promise<Map<number, number>> {
       .from('trending_snapshots')
       .select('repository_id, total_score')
       .gte('captured_date', since)
+      .eq('promoted', true)
+      .eq('metric_version', 'multi-source-v2')
       .range(from, to),
   );
   const raw = new Map<number, number>();

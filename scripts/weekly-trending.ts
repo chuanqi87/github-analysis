@@ -1,349 +1,269 @@
-// 每周热点:抓取 trending → 跨源去重 + 热度排名 Top-N → 落库快照 → 补齐新仓 → 对热点仓做增量鸿蒙分析。
+// 多源热点发现：每天保留候选全集，每周证据自然累积；高可信热点进入分析池。
 import 'dotenv/config';
-import { fetchTrending } from '@/lib/sources/ossinsight';
-import { fetchGithubTrending } from '@/lib/sources/githubTrending';
-import { batchEnrich } from '@/lib/github/graphql';
+import { fetchTrending, type TrendingPeriod } from '@/lib/sources/ossinsight';
+import { fetchGithubTrending, type TrendingSince } from '@/lib/sources/githubTrending';
+import { batchEnrich, type EnrichResult } from '@/lib/github/graphql';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
-import { log, type StageOpts } from '@/scripts/_common';
-import { runHarmonySignals } from '@/scripts/03-harmony-signals';
-import { runLlmClassify } from '@/scripts/05-llm-classify';
-import { runScore } from '@/scripts/07-score';
+import { log, today, type StageOpts } from '@/scripts/_common';
 
-/** 每周热点保留条数 */
-const TOP_N = 10;
+const SNAPSHOT_LIMIT = 100;
+const PROMOTION_LIMIT = 50;
+const RRF_K = 10;
+const METRIC_VERSION = 'multi-source-v2';
 
-interface SnapshotSeed {
+interface Seed {
   source: string;
-  repo_name: string;
-  primary_language: string | null;
-  description: string | null;
-  /** 仓库总 star 数(以 GitHub GraphQL 为准) */
+  repoName: string;
+  rank: number;
+  weight: number;
+}
+
+interface PreviousSnapshot {
   stars: number | null;
-  /** 仓库总 fork 数 */
   forks: number | null;
-  /** 近一周新增 star 数 */
-  stars_delta: number | null;
-  /** 近一周新增 fork 数 */
-  forks_delta: number | null;
-  total_score: number | null;
-  rank: number | null;
 }
 
-/**
- * 本周一的日期(ISO 周,UTC)。
- *
- * 全程用 UTC 分量运算:旧实现混用本地 getDay/getDate 与 toISOString(UTC),
- * 在 UTC+N 时区的周一凌晨会算出上周日,把本周快照错写到上一周。
- */
-function getMonday(now: Date = new Date()): string {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const dow = d.getUTCDay(); // 0=周日
-  d.setUTCDate(d.getUTCDate() - (dow === 0 ? 6 : dow - 1));
-  return d.toISOString().slice(0, 10);
+interface ScoredRepo {
+  repo: EnrichResult;
+  sources: string[];
+  dailyScore: number;
+  weeklyScore: number;
+  starsDelta: number | null;
+  forksDelta: number | null;
+  score: number;
 }
 
-/**
- * 查询仓库的历史上榜周数(不含 excludeWeek 所在周)。
- *
- * 排除本周是为了幂等:同一周内重跑本阶段时,本周快照可能已写入,
- * 若把它算进历史周数再 +1,weeks_on_trending 会每跑一次涨一次。
- */
-async function getWeeksOnTrending(
-  repoNames: string[],
-  excludeWeek: string,
-): Promise<Map<string, number>> {
+function mondayIso(): string {
+  // 用北京时间业务日期的正午构造，确保周日 20:00 UTC（北京时间周一）属于新一周。
+  const date = new Date(`${today()}T12:00:00.000Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - day + (day === 0 ? -6 : 1));
+  return date.toISOString().slice(0, 10);
+}
+
+async function collectSource(
+  source: string,
+  weight: number,
+  fetcher: () => Promise<{ repo_name: string; rank: number }[]>,
+): Promise<Seed[]> {
+  try {
+    const rows = await fetcher();
+    log(`${source} 获取 ${rows.length} 条`);
+    return rows.map((row) => ({ source, repoName: row.repo_name, rank: row.rank, weight }));
+  } catch (error) {
+    log(`${source} 获取失败，降级使用其它来源:${String(error).slice(0, 160)}`);
+    return [];
+  }
+}
+
+async function collectSeeds(): Promise<Seed[]> {
+  const specs: Array<Promise<Seed[]>> = [
+    collectSource('ossinsight-daily', 1, () => fetchTrending('past_24_hours' satisfies TrendingPeriod)),
+    collectSource('ossinsight-weekly', 1.15, () => fetchTrending('past_week' satisfies TrendingPeriod)),
+    collectSource('github-daily', 0.9, () => fetchGithubTrending('daily' satisfies TrendingSince)),
+    collectSource('github-weekly', 1.05, () => fetchGithubTrending('weekly' satisfies TrendingSince)),
+  ];
+  return (await Promise.all(specs)).flat();
+}
+
+async function loadPrevious(names: string[]): Promise<Map<string, PreviousSnapshot>> {
   const client = getAdminClient();
-  const weekMap = new Map<string, number>();
-
-  if (repoNames.length === 0) return weekMap;
-
-  // 分批查询(每批最多 500 个)
-  for (let i = 0; i < repoNames.length; i += 500) {
-    const chunk = repoNames.slice(i, i + 500);
-    const { data, error } = await client.rpc('count_trending_weeks', {
-      p_repo_names: chunk,
-      p_exclude_week: excludeWeek,
-    });
-
-    if (error) {
-      log(`查询上榜周数失败: ${error.message}`);
-      continue;
-    }
-
-    if (data) {
-      for (const row of data as { repo_name: string; week_count: number }[]) {
-        weekMap.set(row.repo_name, row.week_count);
-      }
+  const map = new Map<string, PreviousSnapshot>();
+  for (let i = 0; i < names.length; i += 300) {
+    const { data, error } = await client
+      .from('trending_snapshots')
+      .select('repo_name,stars,forks,captured_date')
+      .in('repo_name', names.slice(i, i + 300))
+      .lt('captured_date', today())
+      .eq('metric_version', METRIC_VERSION)
+      .order('captured_date', { ascending: false });
+    if (error) throw new Error(`加载历史热点失败:${error.message}`);
+    for (const row of (data ?? []) as Array<PreviousSnapshot & { repo_name: string }>) {
+      if (!map.has(row.repo_name)) map.set(row.repo_name, { stars: row.stars, forks: row.forks });
     }
   }
+  return map;
+}
 
+async function loadTrendingWeeks(names: string[]): Promise<Map<string, number>> {
+  const client = getAdminClient();
+  const weekMap = new Map<string, number>();
+  const currentWeek = new Set<string>();
+  for (let i = 0; i < names.length; i += 300) {
+    const chunk = names.slice(i, i + 300);
+    const [{ data, error }, current] = await Promise.all([
+      client.rpc('count_trending_weeks', { p_repo_names: chunk }),
+      client
+        .from('trending_snapshots')
+        .select('repo_name')
+        .in('repo_name', chunk)
+        .gte('captured_date', mondayIso()),
+    ]);
+    if (error) throw new Error(`查询热点周数失败:${error.message}`);
+    for (const row of (data ?? []) as { repo_name: string; week_count: number }[]) {
+      weekMap.set(row.repo_name, Number(row.week_count));
+    }
+    for (const row of (current.data ?? []) as { repo_name: string }[]) currentWeek.add(row.repo_name);
+  }
+  for (const name of names) weekMap.set(name, (weekMap.get(name) ?? 0) + (currentWeek.has(name) ? 0 : 1));
   return weekMap;
 }
 
-async function collectSeeds(): Promise<SnapshotSeed[]> {
-  const seeds: SnapshotSeed[] = [];
-  try {
-    const oss = await fetchTrending('past_week');
-    for (const it of oss) {
-      seeds.push({
-        source: 'ossinsight',
-        repo_name: it.repo_name,
-        primary_language: it.primary_language,
-        description: it.description,
-        // OSS Insight 只给周期增量,总量后面统一由 GraphQL 富化补齐
-        stars: null,
-        forks: null,
-        stars_delta: it.stars_delta,
-        forks_delta: it.forks_delta,
-        total_score: it.total_score,
-        rank: it.rank,
-      });
-    }
-    log(`OSS Insight 热点 ${oss.length} 条`);
-  } catch (e) {
-    log(`OSS Insight 抓取失败:${String(e).slice(0, 120)}`);
-  }
-  try {
-    const gh = await fetchGithubTrending('weekly');
-    for (const it of gh) {
-      seeds.push({
-        source: 'github-trending',
-        repo_name: it.repo_name,
-        primary_language: it.primary_language,
-        description: it.description,
-        stars: it.stars,
-        forks: it.forks,
-        stars_delta: it.stars_delta,
-        forks_delta: null,
-        total_score: null,
-        rank: it.rank,
-      });
-    }
-    log(`GitHub Trending 热点 ${gh.length} 条`);
-  } catch (e) {
-    log(`GitHub Trending 抓取失败:${String(e).slice(0, 120)}`);
-  }
-  return seeds;
+function normalized(values: number[]): number[] {
+  const max = Math.max(0, ...values);
+  return values.map((value) => (max > 0 ? value / max : 0));
 }
 
-/** 按来源优先级取第一个非空字段值。 */
-function pick<K extends keyof SnapshotSeed>(
-  entries: SnapshotSeed[],
-  order: string[],
-  key: K,
-): SnapshotSeed[K] | null {
-  for (const source of order) {
-    const hit = entries.find((e) => e.source === source && e[key] != null);
-    if (hit) return hit[key];
-  }
-  const any = entries.find((e) => e[key] != null);
-  return any ? any[key] : null;
-}
+function scoreRepos(seeds: Seed[], repos: EnrichResult[], previous: Map<string, PreviousSnapshot>): ScoredRepo[] {
+  const grouped = new Map<string, Seed[]>();
+  for (const seed of seeds) grouped.set(seed.repoName, [...(grouped.get(seed.repoName) ?? []), seed]);
 
-/**
- * 跨数据源去重 + 热度排名。
- *
- * 策略:
- * 1. 按 repo_name 分组,同一项目出现在多个来源时合并为一条;
- * 2. 热度分 = Σ(1/rank) 各来源倒数排名之和,出现在多源的项目自然获得加权;
- * 3. 按热度分降序取 Top-N,重新编号 rank 1..N;
- * 4. 字段级合并(而非整条取某一来源):
- *    - stars/forks 总量:只有 github-trending 抓得到,OSS Insight 没有;
- *    - stars_delta 周增量:优先 github-trending(GitHub 自己的口径),
- *      缺失时回落 OSS Insight 的 past_week 统计;
- *    - 文本元数据优先 OSS Insight(描述更完整,不像 trending 页面被截断)。
- */
-function deduplicateAndTopN(seeds: SnapshotSeed[], topN = TOP_N): SnapshotSeed[] {
-  // 按 repo_name 分组
-  const grouped = new Map<string, SnapshotSeed[]>();
-  for (const s of seeds) {
-    const list = grouped.get(s.repo_name) ?? [];
-    list.push(s);
-    grouped.set(s.repo_name, list);
-  }
-
-  // 计算统一热度分
-  interface ScoredEntry {
-    seed: SnapshotSeed;
-    hotScore: number;
-    multiSource: boolean;
-  }
-  const scored: ScoredEntry[] = [];
-
-  const TEXT_ORDER = ['ossinsight', 'github-trending'];
-  const COUNT_ORDER = ['github-trending', 'ossinsight'];
-
-  for (const [repoName, entries] of grouped) {
-    // 热度分:各来源倒数排名之和
-    let hotScore = 0;
-    const sourceSet = new Set<string>();
-    for (const e of entries) {
-      if (e.rank && e.rank > 0) hotScore += 1 / e.rank;
-      sourceSet.add(e.source);
-    }
-
-    const sources = Array.from(sourceSet).sort();
-
-    scored.push({
-      seed: {
-        // 多来源用逗号拼接
-        source: sources.join(','),
-        repo_name: repoName,
-        primary_language: pick(entries, TEXT_ORDER, 'primary_language'),
-        description: pick(entries, TEXT_ORDER, 'description'),
-        stars: pick(entries, COUNT_ORDER, 'stars'),
-        forks: pick(entries, COUNT_ORDER, 'forks'),
-        stars_delta: pick(entries, COUNT_ORDER, 'stars_delta'),
-        forks_delta: pick(entries, COUNT_ORDER, 'forks_delta'),
-        total_score: pick(entries, TEXT_ORDER, 'total_score'),
-        rank: null, // 下面按热度分重新编号
-      },
-      hotScore,
-      multiSource: sources.length > 1,
-    });
-  }
-
-  // 按热度分降序排序,取 Top-N
-  scored.sort((a, b) => {
-    // 多来源优先(同分时)
-    if (a.multiSource !== b.multiSource) return a.multiSource ? -1 : 1;
-    return b.hotScore - a.hotScore;
+  const base = repos.filter((repo) => repo.found && repo.id != null).map((repo) => {
+    const entries = grouped.get(repo.full_name) ?? [];
+    const dailyScore = entries
+      .filter((entry) => entry.source.endsWith('daily'))
+      .reduce((sum, entry) => sum + entry.weight / (RRF_K + entry.rank), 0);
+    const weeklyScore = entries
+      .filter((entry) => entry.source.endsWith('weekly'))
+      .reduce((sum, entry) => sum + entry.weight / (RRF_K + entry.rank), 0);
+    const old = previous.get(repo.full_name);
+    return {
+      repo,
+      sources: Array.from(new Set(entries.map((entry) => entry.source))).sort(),
+      dailyScore,
+      weeklyScore,
+      starsDelta: old?.stars == null ? null : Math.max(0, repo.stars - old.stars),
+      forksDelta: old?.forks == null ? null : Math.max(0, repo.forks - old.forks),
+      score: 0,
+    };
   });
-  const top = scored.slice(0, topN);
+  const rankNorm = normalized(base.map((row) => row.dailyScore + row.weeklyScore));
+  const starNorm = normalized(base.map((row) => row.starsDelta ?? 0));
+  const forkNorm = normalized(base.map((row) => row.forksDelta ?? 0));
+  return base
+    .map((row, index) => ({
+      ...row,
+      // 排名共识为主，真实 Star/Fork 增量校正；多源交叉命中额外加分。
+      score:
+        0.55 * rankNorm[index] +
+        0.25 * starNorm[index] +
+        0.1 * forkNorm[index] +
+        0.1 * Math.min(1, row.sources.length / 3),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, SNAPSHOT_LIMIT);
+}
 
-  // 重新编号 rank,把 hotScore 存入 total_score
-  return top.map((item, i) => ({
-    ...item.seed,
-    rank: i + 1,
-    total_score: Math.round(item.hotScore * 10000) / 10000, // 保留 4 位小数
-  }));
+function repoRow(repo: EnrichResult, existing?: { is_archived: boolean; archived_reason: string | null }): Record<string, unknown> {
+  const derivedArchived = existing?.is_archived === true && existing.archived_reason !== 'github_archived';
+  return {
+    id: repo.id,
+    full_name: repo.full_name,
+    owner: repo.owner,
+    name: repo.name,
+    description: repo.description,
+    homepage: repo.homepage,
+    primary_language: repo.primary_language,
+    stars: repo.stars,
+    forks: repo.forks,
+    license: repo.license,
+    pushed_at: repo.pushed_at,
+    repo_created_at: repo.repo_created_at,
+    topics: repo.topics,
+    latest_release_at: repo.latest_release_at,
+    is_archived: repo.is_archived || derivedArchived,
+    archived_reason: repo.is_archived ? 'github_archived' : (derivedArchived ? existing?.archived_reason ?? null : null),
+  };
+}
+
+function signalRow(repo: EnrichResult): Record<string, unknown> {
+  return {
+    repository_id: repo.id,
+    has_oh_package: repo.has_oh_package,
+    has_build_profile: repo.has_build_profile,
+    has_module_json5: repo.has_module_json5,
+    has_hvigor: repo.has_hvigor,
+    has_entry_dir: repo.has_entry_dir,
+    has_ets: repo.has_ets,
+  };
 }
 
 export async function runWeeklyTrending(_opts: StageOpts = {}): Promise<void> {
-  const runId = await startRun('weekly-trending');
+  const runId = await startRun('trending-discovery');
   try {
-    const client = getAdminClient();
-    const rawSeeds = await collectSeeds();
-    if (rawSeeds.length === 0) {
-      await finishRun(runId, 'success', { count: 0 });
-      log('无热点数据');
-      return;
-    }
+    const seeds = await collectSeeds();
+    const names = Array.from(new Set(seeds.map((seed) => seed.repoName).filter((name) => name.includes('/'))));
+    if (!names.length) throw new Error('所有热点来源均无有效数据');
 
-    // 跨源去重 + 热度排名 Top-N
-    const seeds = deduplicateAndTopN(rawSeeds);
-    log(`去重后 ${seeds.length} 条(Top ${TOP_N},原始 ${rawSeeds.length} 条)`);
-
-    const names = Array.from(new Set(seeds.map((s) => s.repo_name)));
-    const date = getMonday(); // 使用本周一作为 captured_date
-
-    // 查询历史上榜周数(排除本周,保证同周重跑幂等)
-    const weekMap = await getWeeksOnTrending(names, date);
-    log(`查询到 ${weekMap.size} 个仓库的历史上榜周数`);
-
-    // 已在库的仓
-    const nameToId = new Map<string, number>();
-    for (let i = 0; i < names.length; i += 500) {
-      const chunk = names.slice(i, i + 500);
-      const { data } = await client.from('repositories').select('id, full_name').in('full_name', chunk);
-      for (const r of (data ?? []) as { id: number; full_name: string }[]) nameToId.set(r.full_name, r.id);
-    }
-
-    // GraphQL 富化 Top-N 全部仓库(不只是新仓):
-    // trending 两个来源都给不出可靠的仓库总 star 数(OSS Insight 只有周增量,
-    // GitHub Trending 页面解析是 best-effort),这里统一以 stargazerCount 为准,
-    // 顺带补齐新仓的 id/元数据/工程文件信号。Top-10 只占一次 GraphQL 批量请求。
-    const totals = new Map<string, { stars: number; forks: number }>();
-    const enrichable = names.filter((n) => n.includes('/'));
-    if (enrichable.length) {
-      log(`富化 ${enrichable.length} 个热点仓(取总 star 数 + 新仓元数据)...`);
-      const enriched = await batchEnrich(
-        enrichable.map((n) => {
-          const [owner, name] = n.split('/');
-          return { owner, name, full_name: n };
-        }),
-      );
-      const repoRows: Record<string, unknown>[] = [];
-      const sigRows: Record<string, unknown>[] = [];
-      for (const e of enriched) {
-        if (!e.found || e.id == null || !e.owner || !e.name) continue;
-        nameToId.set(e.full_name, e.id);
-        totals.set(e.full_name, { stars: e.stars, forks: e.forks });
-        repoRows.push({
-          id: e.id,
-          full_name: e.full_name,
-          owner: e.owner,
-          name: e.name,
-          description: e.description,
-          homepage: e.homepage,
-          primary_language: e.primary_language,
-          stars: e.stars,
-          forks: e.forks,
-          license: e.license,
-          pushed_at: e.pushed_at,
-          repo_created_at: e.repo_created_at,
-          topics: e.topics,
-          latest_release_at: e.latest_release_at,
-        });
-        sigRows.push({
-          repository_id: e.id,
-          has_oh_package: e.has_oh_package,
-          has_build_profile: e.has_build_profile,
-          has_module_json5: e.has_module_json5,
-          has_hvigor: e.has_hvigor,
-          has_entry_dir: e.has_entry_dir,
-          has_ets: e.has_ets,
-        });
-      }
-      await upsertBatched('repositories', repoRows, { onConflict: 'id' });
-      await upsertBatched('harmony_signals', sigRows, { onConflict: 'repository_id' });
-    }
-
-    // 落库快照(带 repository_id,去重后每条 repo 只写一行)
-    const snapRows = seeds.map((s) => ({
-      captured_date: date,
-      source: s.source,
-      repo_name: s.repo_name,
-      repository_id: nameToId.get(s.repo_name) ?? null,
-      primary_language: s.primary_language,
-      description: s.description,
-      // 总量以 GraphQL 为准,拿不到时回落到 trending 页面解析出的值
-      stars: totals.get(s.repo_name)?.stars ?? s.stars,
-      forks: totals.get(s.repo_name)?.forks ?? s.forks,
-      stars_delta: s.stars_delta,
-      forks_delta: s.forks_delta,
-      total_score: s.total_score,
-      rank: s.rank,
-      weeks_on_trending: (weekMap.get(s.repo_name) ?? 0) + 1, // 历史周数 + 本次
+    log(`热点候选去重后 ${names.length} 个，统一获取 GitHub 实时元数据…`);
+    const enriched = await batchEnrich(names.map((full_name) => {
+      const [owner, name] = full_name.split('/');
+      return { owner, name, full_name };
     }));
-    // 注意:去重后 unique 约束是 (captured_date, repo_name)
-    await upsertBatched('trending_snapshots', snapRows, { onConflict: 'captured_date,repo_name' });
-
-    // 对热点仓做增量鸿蒙分析(信号 → tier-1 分类 → 评分)
-    const ids = Array.from(new Set(Array.from(nameToId.values())));
-    if (ids.length) {
-      log(`对 ${ids.length} 个热点仓做增量分析...`);
-      await runHarmonySignals({ ids });
-      await runLlmClassify({ ids });
-      await runScore({ ids });
+    const valid = enriched.filter((repo) => repo.found && repo.id != null && repo.owner && repo.name);
+    const archiveStates = new Map<number, { is_archived: boolean; archived_reason: string | null }>();
+    for (let i = 0; i < valid.length; i += 300) {
+      const { data, error } = await getAdminClient()
+        .from('repositories')
+        .select('id,is_archived,archived_reason')
+        .in('id', valid.slice(i, i + 300).map((repo) => repo.id));
+      if (error) throw new Error(`加载热点仓归档状态失败:${error.message}`);
+      for (const row of (data ?? []) as Array<{ id: number; is_archived: boolean; archived_reason: string | null }>) {
+        archiveStates.set(row.id, row);
+      }
     }
+    await upsertBatched('repositories', valid.map((repo) => repoRow(repo, archiveStates.get(repo.id!))), { onConflict: 'id' });
+    await upsertBatched('harmony_signals', valid.map(signalRow), { onConflict: 'repository_id' });
+
+    const [previous, weeks] = await Promise.all([loadPrevious(names), loadTrendingWeeks(names)]);
+    const scored = scoreRepos(seeds, valid, previous);
+    const date = today();
+    const snapshots = scored.map((row, index) => ({
+      captured_date: date,
+      source: row.sources.join(','),
+      repo_name: row.repo.full_name,
+      repository_id: row.repo.id,
+      primary_language: row.repo.primary_language,
+      description: row.repo.description,
+      stars: row.repo.stars,
+      forks: row.repo.forks,
+      total_score: Number(row.score.toFixed(6)),
+      daily_score: Number(row.dailyScore.toFixed(6)),
+      weekly_score: Number(row.weeklyScore.toFixed(6)),
+      stars_delta: row.starsDelta,
+      forks_delta: row.forksDelta,
+      source_count: row.sources.length,
+      rank: index + 1,
+      weeks_on_trending: weeks.get(row.repo.full_name) ?? 1,
+      promoted: index < PROMOTION_LIMIT,
+      metric_version: METRIC_VERSION,
+    }));
+    // 同一天重跑时快照必须是精确替换；仅 upsert 会遗留本次已跌出 Top100 的旧行。
+    const { error: clearError } = await getAdminClient()
+      .from('trending_snapshots')
+      .delete()
+      .eq('captured_date', date);
+    if (clearError) throw new Error(`清理当日旧热点快照失败:${clearError.message}`);
+    await upsertBatched('trending_snapshots', snapshots, { onConflict: 'captured_date,repo_name' });
 
     await finishRun(runId, 'success', {
-      raw_seeds: rawSeeds.length,
-      snapshots: snapRows.length,
-      analyzed: ids.length,
+      raw_seeds: seeds.length,
+      unique_candidates: names.length,
+      snapshots: snapshots.length,
+      promoted: Math.min(PROMOTION_LIMIT, snapshots.length),
+      sources_ok: new Set(seeds.map((seed) => seed.source)).size,
     });
-    log(`weekly-trending 完成:原始 ${rawSeeds.length} → 去重 Top${TOP_N} ${snapRows.length}、分析 ${ids.length}`);
-  } catch (err) {
-    await finishRun(runId, 'failed', { error: String(err) });
-    throw err;
+    log(`热点发现完成:原始 ${seeds.length} → 候选 ${names.length} → 快照 ${snapshots.length}，Top ${PROMOTION_LIMIT} 入池`);
+  } catch (error) {
+    await finishRun(runId, 'failed', { error: String(error) });
+    throw error;
   }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runWeeklyTrending().catch((e) => {
-    console.error(e);
+  runWeeklyTrending().catch((error) => {
+    console.error(error);
     process.exit(1);
   });
 }

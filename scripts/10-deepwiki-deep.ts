@@ -14,6 +14,8 @@ import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
+import { refreshAnalysisQueue, selectTier3Candidates } from '@/lib/pipeline/candidates';
+import { EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
 
 /** tier-3 成本比 tier-2 高(7 问 + 强模型),默认只做 top-30。 */
 const DEFAULT_LIMIT = 30;
@@ -27,6 +29,8 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
       .from('analysis')
       .select('repository_id, input_hash')
       .eq('tier', 3)
+      .eq('prompt_version', DEEP_PROMPT_VERSION)
+      .eq('model', EVALUATE_MODEL_NAME)
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 tier3 analysis 失败:${error.message}`);
     for (const r of (data ?? []) as { repository_id: number; input_hash: string }[]) {
@@ -39,10 +43,12 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
 export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('deepwiki-deep');
   try {
-    const all = await loadStageRepos({ ...opts, limit: undefined });
-    const active = all.filter((r) => !r.is_archived);
     const limit = opts.limit ?? DEFAULT_LIMIT;
-    // loadStageRepos 已按 star 降序
+    if (!opts.ids?.length) await refreshAnalysisQueue();
+    const selectedIds = opts.ids?.length ? opts.ids : await selectTier3Candidates(limit);
+    const all = await loadStageRepos({ ids: selectedIds });
+    const active = all.filter((r) => !r.is_archived);
+    // 候选池已排除现有 tier-3，并按热点 + 鸿蒙价值排序；这里不再从 Star 榜首反复截断。
     const candidates = active.slice(0, limit);
 
     const ids = candidates.map((r) => r.id);
@@ -121,6 +127,7 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,
+            analyzed_at: new Date().toISOString(),
           });
           analyzed++;
           log(`  已深挖 ${analyzed}/${candidates.length}:${repo.full_name}`);

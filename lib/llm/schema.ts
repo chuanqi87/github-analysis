@@ -83,6 +83,19 @@ export const evaluateSchema = z.object({
         area: z.string().describe('适配/贡献点领域,如 UI/网络/存储/原生能力/文档/工具链'),
         description: z.string().describe('具体要做什么,必须挂到该项目的具体模块/依赖/功能'),
         difficulty: z.enum(['low', 'medium', 'high']),
+        harmony_value: z.string().describe('该能力补足鸿蒙生态的什么缺口，服务哪些端侧/跨设备场景'),
+        project_assets: z.string().describe('可直接复用的项目模块、接口、算法或平台抽象层；必须来自证据材料'),
+        target_devices: z.array(z.string()).max(5).describe('适用鸿蒙设备形态，如手机/平板/2in1/穿戴/智慧屏；不适用则空数组'),
+        target_kits: z.array(z.string()).max(6).describe('可能对接的 HarmonyOS Kit/API/NAPI/ArkUI；无材料支撑时写“需验证”而非猜测具体 API'),
+        integration_form: z.enum([
+          'ohpm_package',
+          'arkui_component',
+          'napi_module',
+          'platform_backend',
+          'sdk_plugin',
+          'app_feature',
+          'docs_tooling',
+        ]).describe('在鸿蒙生态中的最终交付形态'),
         evidence: z
           .string()
           .describe('依据:引用 README 原文短句、信号条目或依赖名,不得编造'),

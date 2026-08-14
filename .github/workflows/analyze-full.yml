@@ -1,7 +1,6 @@
-name: analyze-full
+name: analyze-daily
 
-# 仓库同步:每日抓取 Star>=10000 的仓库,与库中对比,新增仓库做初步分析(不含 LLM)。
-# 手动触发可运行完整流程(含 LLM 深度分析)。
+# 每日分层分析:多源发现 → 大批初筛 → 高价值深评 → 代码级深析 → 每日指标。
 on:
   workflow_dispatch:
     inputs:
@@ -10,11 +9,23 @@ on:
         required: false
         default: ''
       stage:
-        description: '运行模式:sync(同步,无LLM)/all(全量,含LLM)/单阶段'
+        description: '运行模式:daily(推荐)/all/sync/单阶段'
         required: false
-        default: 'all'
+        default: 'daily'
+      preliminary_limit:
+        description: '每日初筛数量'
+        required: false
+        default: '400'
+      deep_limit:
+        description: '每日高价值深评数量'
+        required: false
+        default: '100'
+      tier3_limit:
+        description: '每日代码级深析数量'
+        required: false
+        default: '20'
   schedule:
-    - cron: '0 21 * * *' # 每日 21:00 UTC 同步新仓库(初步分析)
+    - cron: '0 21 * * *' # 每日 21:00 UTC 执行完整分层漏斗
 
 concurrency:
   group: analyze
@@ -42,14 +53,14 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run pipeline
+      - name: Run layered pipeline
         run: |
-          # 定时调度:只跑 sync(无 LLM),快速同步新仓库
-          # 手动触发:按用户选择运行(all/sync/单阶段)
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "⏰ 定时同步模式:获取 Star>=10000 新仓库 + 初步分析"
-            pnpm pipeline --stage=sync
+            pnpm pipeline --stage=daily --preliminary-limit=400 --deep-limit=100 --tier3-limit=20
           else
-            echo "🎛️ 手动触发:stage=${{ github.event.inputs.stage || 'all' }}"
-            pnpm pipeline --stage=${{ github.event.inputs.stage || 'all' }} --limit=${{ github.event.inputs.limit }}
+            pnpm pipeline --stage=${{ github.event.inputs.stage || 'daily' }} \
+              --limit=${{ github.event.inputs.limit }} \
+              --preliminary-limit=${{ github.event.inputs.preliminary_limit || '400' }} \
+              --deep-limit=${{ github.event.inputs.deep_limit || '100' }} \
+              --tier3-limit=${{ github.event.inputs.tier3_limit || '20' }}
           fi

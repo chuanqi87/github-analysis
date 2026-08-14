@@ -7,6 +7,12 @@ export interface StageOpts {
   ids?: number[]; // 仅处理指定仓库 id(每日热点增量用)
   /** deepwiki 阶段专用:取多少个仓库做定向提问(其余只取廉价的目录) */
   evidenceLimit?: number;
+  /** daily 阶段：每日 tier-1 初筛预算。 */
+  preliminaryLimit?: number;
+  /** daily 阶段：每日 tier-2 深评预算。 */
+  deepLimit?: number;
+  /** daily 阶段：每日 tier-3 代码级深析预算。 */
+  tier3Limit?: number;
 }
 
 export function log(msg: string): void {
@@ -38,6 +44,15 @@ export function parseArgs(argv: string[]): { stage?: string } & StageOpts {
       case 'evidence-limit':
         out.evidenceLimit = value ? Number(value) : undefined;
         break;
+      case 'preliminary-limit':
+        out.preliminaryLimit = value ? Number(value) : undefined;
+        break;
+      case 'deep-limit':
+        out.deepLimit = value ? Number(value) : undefined;
+        break;
+      case 'tier3-limit':
+        out.tier3Limit = value ? Number(value) : undefined;
+        break;
     }
   }
   return out;
@@ -63,5 +78,10 @@ export async function pMap<T, R>(
 }
 
 export function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  // GitHub Actions 使用 UTC；业务看板按北京时间分日，避免每天 05:00 的定时任务记到前一天。
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+export function todayStartIso(): string {
+  return new Date(`${today()}T00:00:00+08:00`).toISOString();
 }

@@ -18,7 +18,7 @@ import {
 import type { Session } from '@supabase/supabase-js';
 import Link from 'next/link';
 import { HARMONY_STATE_LABELS, HARMONY_STATES, type HarmonyState } from '@/lib/types';
-import { fetchBoard, fetchRepoStats, upsertOverride, type BoardRow, type RepoStats } from '@/lib/queries';
+import { fetchBoard, fetchDailyPipelineMetrics, fetchRepoStats, upsertOverride, type BoardRow, type DailyPipelineMetric, type RepoStats } from '@/lib/queries';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { ADMIN_EMAIL } from '@/lib/config';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
@@ -30,6 +30,7 @@ import DeepwikiFacts from '@/components/DeepwikiFacts';
 import StatsCards from '@/components/admin/StatsCards';
 import PipelineCard from '@/components/admin/PipelineCard';
 import LoginCard from '@/components/admin/LoginCard';
+import DailyProgressCard from '@/components/admin/DailyProgressCard';
 import MobileAdminList from '@/components/admin/MobileAdminList';
 import { buildAdminFilters, type AnalysisFilter } from '@/components/admin/filters';
 
@@ -42,6 +43,7 @@ export default function AdminPage() {
   const [form] = Form.useForm();
   const [analysisFilter, setAnalysisFilter] = useState<AnalysisFilter>('all');
   const [stats, setStats] = useState<RepoStats | null>(null);
+  const [dailyMetrics, setDailyMetrics] = useState<DailyPipelineMetric[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -61,6 +63,7 @@ export default function AdminPage() {
   useEffect(() => {
     if (isSupabaseConfigured()) {
       fetchRepoStats().then(setStats).catch(console.error);
+      fetchDailyPipelineMetrics().then(setDailyMetrics).catch(console.error);
     }
   }, [analysisFilter]);
 
@@ -213,6 +216,8 @@ export default function AdminPage() {
       </Flex>
 
       <StatsCards stats={stats} />
+
+      <DailyProgressCard rows={dailyMetrics} />
 
       <PipelineCard />
 

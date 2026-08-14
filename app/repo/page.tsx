@@ -269,6 +269,16 @@ function RepoDetail() {
                         <Typography.Text strong>{p.area}</Typography.Text>
                         <br />
                         <Typography.Text type="secondary">{p.description}</Typography.Text>
+                        {p.harmony_value && (
+                          <Typography.Paragraph style={{ margin: '4px 0 0' }}>
+                            <Typography.Text strong>鸿蒙契合：</Typography.Text>{p.harmony_value}
+                          </Typography.Paragraph>
+                        )}
+                        <Space size={[4, 4]} wrap>
+                          {p.integration_form && <Tag color="blue">{p.integration_form}</Tag>}
+                          {p.target_devices?.map((device) => <Tag key={device}>{device}</Tag>)}
+                          {p.target_kits?.map((kit) => <Tag key={kit} color="cyan">{kit}</Tag>)}
+                        </Space>
                       </div>
                     </Space>
                   </List.Item>

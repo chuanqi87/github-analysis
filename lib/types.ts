@@ -176,6 +176,12 @@ export interface AdaptationPoint {
   area: string;
   description: string;
   difficulty: 'low' | 'medium' | 'high';
+  harmony_value?: string;
+  project_assets?: string;
+  target_devices?: string[];
+  target_kits?: string[];
+  integration_form?: 'ohpm_package' | 'arkui_component' | 'napi_module' | 'platform_backend' | 'sdk_plugin' | 'app_feature' | 'docs_tooling';
+  evidence?: string;
 }
 
 export interface AnalysisRow {

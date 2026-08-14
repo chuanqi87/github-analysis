@@ -10,6 +10,9 @@ import { loadCategoryTree } from '@/lib/category/loader';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
+import { refreshAnalysisQueue, selectTier2Candidates } from '@/lib/pipeline/candidates';
+import { PROMPT_VERSION } from '@/lib/llm/prompts';
+import { EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
 
 /**
  * 加载品类适配现状(v_category_stats),格式化为 prompt 文本。
@@ -60,6 +63,8 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
       .from('analysis')
       .select('repository_id, input_hash')
       .eq('tier', 2)
+      .eq('prompt_version', PROMPT_VERSION)
+      .eq('model', EVALUATE_MODEL_NAME)
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 tier2 analysis 失败:${error.message}`);
     for (const r of (data ?? []) as { repository_id: number; input_hash: string }[]) {
@@ -73,13 +78,17 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('llm-evaluate');
   try {
     const tier1 = await loadTier1Ids();
-    const all = await loadStageRepos({ ...opts, limit: undefined });
+    const limit = opts.limit ?? 100;
+    if (!opts.ids?.length) await refreshAnalysisQueue();
+    const selectedIds = opts.ids?.length ? opts.ids : await selectTier2Candidates(limit);
+    const all = await loadStageRepos({ ids: selectedIds });
     // 过滤已归档仓库
     const active = all.filter((r) => !r.is_archived);
     const archivedCount = all.length - active.length;
     if (archivedCount > 0) log(`跳过 ${archivedCount} 个已归档仓库`);
 
-    const limit = opts.limit ?? 100;
+    // 先排除已有 tier-2 的项目再截断，由候选池保证已分析项目不再占住每日名额。
+    // ids 模式仍校验 tier-1 前置条件，便于单仓/热点任务安全调用。
     const candidates = active.filter((r) => tier1.has(r.id)).slice(0, limit);
 
     const ids = candidates.map((r) => r.id);
@@ -160,6 +169,7 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,
+            analyzed_at: new Date().toISOString(),
           });
           analyzed++;
           if (analyzed % 20 === 0) log(`  已深评 ${analyzed}`);

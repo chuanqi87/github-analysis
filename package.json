@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
     "pipeline": "tsx scripts/pipeline.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "check": "tsx scripts/check-config.ts",

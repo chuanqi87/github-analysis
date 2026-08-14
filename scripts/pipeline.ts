@@ -17,6 +17,8 @@ import { runDeepwiki } from '@/scripts/09-deepwiki';
 import { runDeepwikiDeep } from '@/scripts/10-deepwiki-deep';
 import { runWeeklyTrending } from '@/scripts/weekly-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
+import { runDailyAnalysis, writeDailyMetrics } from '@/scripts/daily-analysis';
+import { refreshAnalysisQueue } from '@/lib/pipeline/candidates';
 
 const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'fetch-top': runFetchTop,
@@ -29,6 +31,15 @@ const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'weekly-trending': runWeeklyTrending,
   'build-registry': () => runBuildRegistry(),
   'mark-archived': runMarkArchived,
+  daily: runDailyAnalysis,
+  'refresh-pool': async () => {
+    const stats = await refreshAnalysisQueue();
+    log(`候选池刷新完成:${JSON.stringify(stats)}`);
+  },
+  'daily-metrics': async () => {
+    const metrics = await writeDailyMetrics();
+    log(`每日指标刷新完成:${JSON.stringify(metrics)}`);
+  },
   deepwiki: runDeepwiki,
   // tier-3 按需深挖,不进 FULL_ORDER/SYNC_ORDER
   'deepwiki-deep': runDeepwikiDeep,
@@ -65,7 +76,16 @@ const SYNC_ORDER = [
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const stage = args.stage ?? 'all';
-  const opts: StageOpts = { limit: args.limit, since: args.since, force: args.force, ids: args.ids };
+  const opts: StageOpts = {
+    limit: args.limit,
+    since: args.since,
+    force: args.force,
+    ids: args.ids,
+    evidenceLimit: args.evidenceLimit,
+    preliminaryLimit: args.preliminaryLimit,
+    deepLimit: args.deepLimit,
+    tier3Limit: args.tier3Limit,
+  };
 
   if (stage === 'all') {
     log(`运行全流程(limit=${opts.limit ?? '全量'})`);

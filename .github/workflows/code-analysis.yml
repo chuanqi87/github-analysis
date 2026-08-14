@@ -28,8 +28,7 @@ on:
         description: 'tarball 兜底使用的分析模型'
         required: false
         default: 'qwen3-max'
-  schedule:
-    - cron: '0 23 * * *'  # 每日 23:00 UTC 深度分析
+  # 每日 tier-3 已并入 analyze-full.yml 的分层管道；此 workflow 保留给手动专项深挖。
 
 concurrency:
   group: code-analysis

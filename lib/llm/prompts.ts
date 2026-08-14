@@ -4,13 +4,15 @@
 //     tier-2 可注入品类适配统计以锚定 ecosystem_gap。
 // p6: 注入 DeepWiki 代码事实(模块地图 / 鸿蒙证据分级 / 平台抽象层 / 阻塞依赖),
 //     判定规则相应加入"构建矩阵命中不等于已适配"的反误判条款。
+// p7: 适配点升级为“项目能力 × 鸿蒙生态”契合矩阵，明确设备、Kit、交付形态与可复用资产。
+// p8: 注入经本地 HarmonyOS 官方文档核验的 Kit 能力边界，抑制 Kit 名称误用。
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
 import { isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
 import { formatCategoryList } from '@/lib/category/loader';
 
-export const PROMPT_VERSION = 'p6';
+export const PROMPT_VERSION = 'p8';
 
 /** tier-1 只看 README 头部;tier-2 看更长片段。 */
 export const README_CHARS_TIER1 = 2000;
@@ -96,9 +98,25 @@ const SCORE_RUBRIC_TIER2 = `
 const TIER2_OUTPUT_RULES = `
 ## tier-2 输出纪律(反泛泛而谈)
 
-- **adaptation_points**(最多 6 条):每条必须挂到该项目的具体模块/依赖/功能上,evidence 字段引用给定材料中的依据。
+- **adaptation_points 是“项目能力 × 鸿蒙生态”的契合清单**(最多 6 条),每条必须同时回答:
+  ①项目已有的哪个模块/接口/算法可复用(project_assets)
+  ②它补足鸿蒙的什么生态缺口、服务什么设备/跨设备场景(harmony_value + target_devices)
+  ③应以 ohpm 包、ArkUI 组件、NAPI 模块、平台后端、SDK 插件、应用能力或文档工具中的哪种形态交付(integration_form)
+  ④需要对接哪些 HarmonyOS Kit/API(target_kits)。没有材料支撑时明确写“需验证”,不要猜具体 API 名。
+  description 写实际实施动作,evidence 引用给定材料中的依据。
   **有 DeepWiki 代码事实时优先引用其中的真实文件路径**(如"在 src/os_unix.c 同级新增 os_ohos.c"),
   这比引 README 原文更有说服力;但**只能引材料里出现过的路径,不得自行拼造**
+- 禁止把“翻译文档、增加示例、适配鸿蒙”这种任何项目都成立的动作当作主要契合点；除非项目本身就是文档/教学/工具链。
+- 优先识别鸿蒙生态的真实契合面：ArkUI 声明式 UI、多设备形态、自适应布局、端侧 AI、音视频、图形、网络、数据管理、NAPI 原生库、跨端框架平台后端、分布式协同。只选择与项目能力确实相关的项。
+
+### HarmonyOS 官方能力边界（已由本地官方文档核验）
+- ArkTS/JS 与 C/C++ 交互称 **Node-API**；不要写成一个虚构的“NAPI Kit”。
+- 私钥/密钥生成与密码学操作用 **Universal Keystore Kit (HUKS)**；短密码、Token 等敏感明文存储用 **Asset Store Kit**；通用加解密/签名/哈希算法用 **Crypto Architecture Kit**。
+- HTTP/WebSocket/Socket 使用 **Network Kit**。
+- 音频采集、播放、路由和焦点使用 **Audio Kit**；**AVSession Kit** 只负责媒体会话展示与播控，不替代实时音频管道。
+- **Account Kit** 只用于华为账号登录/授权，不得用于项目私钥或任意凭据存储。
+- **Notification Kit** 只用于用户通知；项目没有通知场景时不要列出。
+- 材料不足以确认具体 Kit 时，target_kits 填“需验证”，禁止拼造 Kit 名称。
 - **recommended_approach**:指明具体技术路径与入手点(如"用 NAPI 封装 core/ 下的 C 解码模块,JS API 层可直接复用"),不写"建议评估后适配"这类空话
 - **reasoning** 按固定结构组织:①技术栈与平台耦合点 ②适配现状证据(引用信号/README)③推荐路径依据 ④关键风险(license/原生依赖/维护状态)
 - **harmony_adapted_repo_url**:同状态判定纪律,只能取自给定信号`;

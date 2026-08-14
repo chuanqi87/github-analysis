@@ -27,8 +27,16 @@ interface RepoRow {
 /** 超过此年限未更新(最近一次 commit)视为 stale(3 年) */
 const STALE_THRESHOLD_MS = 3 * 365.25 * 24 * 60 * 60 * 1000;
 
-async function loadAllRepos(): Promise<RepoRow[]> {
+async function loadAllRepos(opts: StageOpts): Promise<RepoRow[]> {
   const client = getAdminClient();
+  if (opts.ids?.length) {
+    const { data, error } = await client
+      .from('repositories')
+      .select('id, full_name, owner, name, readme_text, is_archived, archived_reason, pushed_at, latest_release_at')
+      .in('id', opts.ids);
+    if (error) throw new Error(`加载指定 repositories 失败:${error.message}`);
+    return (data ?? []) as RepoRow[];
+  }
   const out: RepoRow[] = [];
   const size = 1000;
   for (let from = 0; ; from += size) {
@@ -48,8 +56,8 @@ async function loadAllRepos(): Promise<RepoRow[]> {
 export async function runMarkArchived(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('mark-archived');
   try {
-    const repos = await loadAllRepos();
-    log(`全量刷新归档标记:共 ${repos.length} 个仓库`);
+    const repos = await loadAllRepos(opts);
+    log(`${opts.ids?.length ? '定向' : '全量'}刷新归档标记:共 ${repos.length} 个仓库`);
 
     // ── Step 1: GraphQL 批量查询 isArchived + latestRelease ──────────
     log('Step 1/3: GraphQL 批量查询 isArchived + latestRelease...');

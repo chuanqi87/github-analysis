@@ -14,18 +14,19 @@ import { GH_ACTIONS_URL } from '@/lib/config';
 
 const WORKFLOWS = [
   {
-    id: 'analyze-daily.yml',
-    label: '每日热点同步',
+    id: 'analyze-full.yml',
+    label: '每日分层分析',
     icon: <ThunderboltOutlined />,
     color: 'orange',
-    desc: '抓取 GitHub Trending Top10 + 增量分析',
+    desc: '多源发现 + 400 初筛 + 100 深评 + 20 代码深析',
+    inputs: { stage: 'daily' },
   },
   {
-    id: 'analyze-full.yml',
-    label: '仓库同步（初步分析）',
+    id: 'analyze-daily.yml',
+    label: '每周校准',
     icon: <SyncOutlined />,
     color: 'blue',
-    desc: '获取 Star≥10000 新仓库 + 初步分析（无 LLM）',
+    desc: '热点周证据 + 归档状态 + 全局评分',
   },
   {
     id: 'analyze-full.yml',
@@ -48,6 +49,8 @@ const STATUS_COLORS: Record<string, string> = {
   running: 'processing',
   success: 'success',
   failed: 'error',
+  abandoned: 'warning',
+  cancelled: 'default',
 };
 
 const RUN_COLUMNS = [
