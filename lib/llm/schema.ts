@@ -76,7 +76,12 @@ export const evaluateSchema = z.object({
     .number()
     .min(0)
     .max(1)
-    .describe('该品类鸿蒙生态空白程度 0-1;若提供了品类适配现状数据则以其为准'),
+    .describe('该品类鸿蒙生态真实空白程度 0-1；适配现状只是稀缺度输入，还须考虑端侧重要性、可直接复用性与替代品'),
+  harmony_leverage: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe('项目能力经过鸿蒙专属集成后产生的增量生态价值 0-1；平台无关且可直接使用的通用库应低分'),
   adaptation_points: z
     .array(
       z.object({

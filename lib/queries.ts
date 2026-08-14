@@ -372,6 +372,7 @@ export async function fetchRepoStats(): Promise<RepoStats> {
 
 export interface PipelineRun {
   id: number;
+  session_id: string | null;
   stage: string;
   status: string;
   stats: Record<string, unknown> | null;

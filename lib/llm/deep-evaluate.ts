@@ -93,6 +93,8 @@ export async function deepEvaluateRepo(
   const prompt = sections
     ? `${base.replace('\n请按 schema 输出 JSON。', '')}\n## 子系统深度事实(DeepWiki 逐项问询结果)\n${sections}\n\n请按 schema 输出 JSON。`
     : base;
+  const system = systemPrompt(2, categoryTree, { categoryStats });
+  const startedAt = new Date();
 
   const result = await withRetry(
     () =>
@@ -102,7 +104,7 @@ export async function deepEvaluateRepo(
           schema: evaluateSchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(2, categoryTree, { categoryStats }),
+          system,
           prompt,
           maxRetries: 1,
         }),
@@ -111,6 +113,7 @@ export async function deepEvaluateRepo(
   );
 
   const usage = result.usage as Record<string, number> | undefined;
+  const finishedAt = new Date();
   return {
     data: result.object,
     input_hash: deepEvaluateInputHash(repo, sig, readme, facts),
@@ -118,5 +121,12 @@ export async function deepEvaluateRepo(
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: EVALUATE_MODEL_NAME,
     prompt_version: DEEP_PROMPT_VERSION,
+    trace: {
+      started_at: startedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      system_prompt: system,
+      user_prompt: prompt,
+    },
   };
 }

@@ -13,6 +13,12 @@ import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFo
 import { refreshAnalysisQueue, selectTier2Candidates } from '@/lib/pipeline/candidates';
 import { PROMPT_VERSION } from '@/lib/llm/prompts';
 import { EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
+import {
+  buildEvidenceSnapshot,
+  captureAnalysisExecution,
+  flushAnalysisExecutionLogs,
+  type AnalysisExecutionRow,
+} from '@/lib/pipeline/analysis-log';
 
 /**
  * 加载品类适配现状(v_category_stats),格式化为 prompt 文本。
@@ -112,10 +118,12 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
     let failed = 0;
     let newCategories = 0;
     const rows: Record<string, unknown>[] = [];
+    const executionRows: AnalysisExecutionRow[] = [];
 
     await pMap(
       candidates,
       async (repo) => {
+        const attemptStartedAt = new Date().toISOString();
         const sig = signalsFor(signals, repo.id);
         const analyzeRepo: AnalyzeRepo = {
           full_name: repo.full_name,
@@ -129,6 +137,18 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
         const hash = evaluateInputHash(analyzeRepo, sig, repo.readme_text, facts);
         if (existing.get(repo.id) === hash) {
           skipped++;
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 2,
+            status: 'skipped',
+            model: EVALUATE_MODEL_NAME,
+            promptVersion: PROMPT_VERSION,
+            inputHash: hash,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            startedAt: attemptStartedAt,
+          }));
           return;
         }
         try {
@@ -162,6 +182,7 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             feasibility: out.data.feasibility,
             effort_estimate: out.data.effort_estimate,
             ecosystem_gap: out.data.ecosystem_gap,
+            harmony_leverage: out.data.harmony_leverage,
             adaptation_points: out.data.adaptation_points,
             recommended_approach: out.data.recommended_approach,
             reasoning: out.data.reasoning,
@@ -171,10 +192,38 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             tokens_out: out.tokens_out,
             analyzed_at: new Date().toISOString(),
           });
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 2,
+            status: 'success',
+            model: out.model,
+            promptVersion: out.prompt_version,
+            inputHash: out.input_hash,
+            trace: out.trace,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            output: out.data,
+            tokensIn: out.tokens_in,
+            tokensOut: out.tokens_out,
+          }));
           analyzed++;
           if (analyzed % 20 === 0) log(`  已深评 ${analyzed}`);
         } catch (err) {
           failed++;
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 2,
+            status: 'failed',
+            model: EVALUATE_MODEL_NAME,
+            promptVersion: PROMPT_VERSION,
+            inputHash: hash,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            error: String(err),
+            startedAt: attemptStartedAt,
+          }));
           log(`  深评失败 ${repo.full_name}: ${String(err).slice(0, 120)}`);
         }
       },
@@ -182,6 +231,7 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
     );
 
     await upsertBatched('analysis', rows, { onConflict: 'repository_id,tier,prompt_version,model' });
+    await flushAnalysisExecutionLogs(executionRows);
     await finishRun(runId, 'success', { analyzed, skipped, failed, archived: archivedCount, newCategories });
     log(`llm-evaluate 完成:深评 ${analyzed}、跳过 ${skipped}、失败 ${failed}、归档 ${archivedCount}、新建分类 ${newCategories}`);
   } catch (err) {

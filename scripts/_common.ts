@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { getPipelineSessionId, writeSessionEvent } from '@/lib/pipeline/session';
 
 export interface StageOpts {
   limit?: number;
@@ -16,8 +17,12 @@ export interface StageOpts {
 }
 
 export function log(msg: string): void {
-  console.log(`[${new Date().toISOString()}] ${msg}`);
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [${getPipelineSessionId()}] ${msg}`);
+  writeSessionEvent({ type: 'log', message: msg });
 }
+
+export { getPipelineSessionId, writeSessionEvent };
 
 export function parseArgs(argv: string[]): { stage?: string } & StageOpts {
   const out: { stage?: string } & StageOpts = {};

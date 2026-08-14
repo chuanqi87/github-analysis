@@ -6,13 +6,15 @@
 //     判定规则相应加入"构建矩阵命中不等于已适配"的反误判条款。
 // p7: 适配点升级为“项目能力 × 鸿蒙生态”契合矩阵，明确设备、Kit、交付形态与可复用资产。
 // p8: 注入经本地 HarmonyOS 官方文档核验的 Kit 能力边界，抑制 Kit 名称误用。
+// p9: 把“通用可用性”与“鸿蒙专属增量”拆开；修正生态缺口饱和、通用库高估，
+//     并把 Kit 输出约束到官方名称或“需验证:<能力>”。
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
 import { isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
 import { formatCategoryList } from '@/lib/category/loader';
 
-export const PROMPT_VERSION = 'p8';
+export const PROMPT_VERSION = 'p9';
 
 /** tier-1 只看 README 头部;tier-2 看更长片段。 */
 export const README_CHARS_TIER1 = 2000;
@@ -71,6 +73,10 @@ const SCORE_RUBRIC_BASE = `## B. 价值评估——分析题,用锚点标尺打�
 
 **反膨胀规则**:如果该项目唯一的"贡献路径"是翻译文档/补鸿蒙章节/加 ArkTS 示例这类放在任何项目上都成立的通用动作,mobile_relevance 不得超过 0.3。
 
+**平台无关通用库校准**:lodash/dayjs/nanoid/JSON 库/不可变数据/纯状态机这类无需鸿蒙专属工作即可直接复用的项目，
+即使流行且移植很容易，mobile_relevance 通常只能在 0.35~0.6；除非材料证明它承担鸿蒙端侧关键运行时、UI、
+跨设备或系统能力接口，否则严禁给 0.9 以上。0.9 以上只给“鸿蒙应用直接依赖且需要专属平台实现”的核心能力。
+
 ### feasibility(适配可行性)
 - 0.85~1.0:纯 TS/JS/纯逻辑代码无平台绑定;或上游已有清晰的多平台抽象层
 - 0.6~0.8:平台耦合有限且集中(网络/存储/权限调用点可替换);中小型 C/C++ 库可 NAPI 封装
@@ -92,8 +98,19 @@ const SCORE_RUBRIC_TIER2 = `
 - ≥0.9:引擎/运行时级移植(浏览器内核、游戏引擎、语言 VM)
 
 ### ecosystem_gap(品类生态空白度)
-- 若提供了「品类适配现状」数据,以它为准:gap ≈ 1 − 该品类已适配比例,再按品类对端侧的重要性微调
-- 无数据时按你对鸿蒙三方生态的了解估计,并在 reasoning 中写明依据`;
+- 数据库的“已适配比例”只是观测下限，不是 gap 本身。先算原始稀缺度 1−适配比例，再乘以端侧重要性与替代品缺失程度。
+- 若项目本身是平台无关代码、无需移植即可使用，或鸿蒙已有同类标准能力，gap 必须降到 0.1~0.4，不能因数据库未标记适配就给 1.0。
+- 0.8~1.0 仅用于“鸿蒙端侧确实缺少可用等价物，且该项目能形成关键补位”的品类；reasoning 必须写出缺的具体能力。
+- 无数据时按材料谨慎估计；不知道替代品现状就给 0.5 左右并明确“需验证”，不要假装确定。
+
+### harmony_leverage(鸿蒙专属增量价值)
+- 0~0.2:代码已经平台无关，最多换包管理器/写示例即可使用；没有鸿蒙专属实现价值
+- 0.3~0.5:需要兼容性修补、ohpm 工程化或少量系统 API 替换，但核心交付物仍是通用包
+- 0.6~0.8:能形成明确的 ArkUI 组件、Node-API 模块、HarmonyOS 平台后端、Kit 集成或端侧 AI 能力
+- 0.9~1.0:能补齐关键鸿蒙基础能力或产生手机/平板/穿戴/智慧屏/车机间独有的协同价值
+
+该分数与 feasibility 无关：容易做不代表增量大。必须能由 adaptation_points 中至少一个鸿蒙专属交付面支撑，
+否则 harmony_leverage 不得超过 0.4。`;
 
 const TIER2_OUTPUT_RULES = `
 ## tier-2 输出纪律(反泛泛而谈)
@@ -116,9 +133,22 @@ const TIER2_OUTPUT_RULES = `
 - 音频采集、播放、路由和焦点使用 **Audio Kit**；**AVSession Kit** 只负责媒体会话展示与播控，不替代实时音频管道。
 - **Account Kit** 只用于华为账号登录/授权，不得用于项目私钥或任意凭据存储。
 - **Notification Kit** 只用于用户通知；项目没有通知场景时不要列出。
-- 材料不足以确认具体 Kit 时，target_kits 填“需验证”，禁止拼造 Kit 名称。
+- 文件访问与管理统一归 **Core File Kit**；不要写“File Access Kit”或“File Management Kit”。
+- Preferences、relationalStore、distributedDataObject 是 **ArkData** 下的具体 API/模块；不要虚构“Preferences Kit”、
+  “RelationalStore Kit”或笼统的“Data Management Kit”。旧 distributedData 接口已停止维护，不应作为新适配首选。
+- AI 必须写具体能力：视觉 OCR/检测用 **Core Vision Kit**；轻量端侧推理用 **MindSpore Lite Kit**；
+  跨芯片推理运行时用 **Neural Network Runtime Kit**；Kirin 异构计算用 **CANN Kit**。禁止笼统写“AI Kit”或“AI Framework Kit”。
+- 手势、动画、导航若只是 UI 交互，写 **ArkUI（手势/动画/Navigation API）**，不要虚构“Gesture Kit”“Animation Kit”“Navigation Kit”。
+- target_kits 只能写上面已核验名称、ArkUI、Web Kit 或材料明确给出的 @ohos/@hms API。
+  材料不足时写“需验证:<所需能力>”（例如“需验证:跨设备状态同步”），禁止只写无信息量的“需验证”或拼造 Kit 名称。
 - **recommended_approach**:指明具体技术路径与入手点(如"用 NAPI 封装 core/ 下的 C 解码模块,JS API 层可直接复用"),不写"建议评估后适配"这类空话
 - **reasoning** 按固定结构组织:①技术栈与平台耦合点 ②适配现状证据(引用信号/README)③推荐路径依据 ④关键风险(license/原生依赖/维护状态)
+- **harmony_leverage 与 adaptation_points 一致性**:若所有交付形态只是 ohpm_package/docs_tooling，且没有鸿蒙专属 API/设备价值，
+  harmony_leverage 通常不得超过 0.4；给到 0.6 以上时必须在 reasoning 中点名专属交付物。
+- **严格 JSON 合约**:只输出一个 JSON 对象，不加 Markdown；所有 schema 必填字段都要出现。
+  adaptation_points 最多 6 条，target_devices 最多 5 项，target_kits 最多 6 项；integration_form 只能从
+  ohpm_package / arkui_component / napi_module / platform_backend / sdk_plugin / app_feature / docs_tooling 中选一个。
+  不提新分类时 propose_new_category=false 且 new_category=null。不要输出额外字段。
 - **harmony_adapted_repo_url**:同状态判定纪律,只能取自给定信号`;
 
 function categoryRules(categoryList: string): string {

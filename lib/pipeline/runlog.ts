@@ -1,5 +1,6 @@
 // 管道运行审计:写 pipeline_runs 表。
 import { getAdminClient } from '@/lib/supabase/admin';
+import { getPipelineSessionId, writeSessionEvent } from '@/lib/pipeline/session';
 
 const STALE_RUN_HOURS = 12;
 
@@ -23,14 +24,16 @@ export async function startRun(stage: string): Promise<number | null> {
   await expireStaleRuns();
   const { data, error } = await client
     .from('pipeline_runs')
-    .insert({ stage, status: 'running' })
+    .insert({ stage, status: 'running', session_id: getPipelineSessionId() })
     .select('id')
     .single();
   if (error) {
     console.warn(`[runlog] 记录启动失败:${error.message}`);
     return null;
   }
-  return (data as { id: number }).id;
+  const id = (data as { id: number }).id;
+  writeSessionEvent({ type: 'stage_start', stage, pipeline_run_id: id });
+  return id;
 }
 
 export async function finishRun(
@@ -45,4 +48,5 @@ export async function finishRun(
     .update({ status, stats: stats ?? null, finished_at: new Date().toISOString() })
     .eq('id', id);
   if (error) console.warn(`[runlog] 记录结束失败:${error.message}`);
+  else writeSessionEvent({ type: 'stage_finish', pipeline_run_id: id, status, stats: stats ?? null });
 }

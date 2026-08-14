@@ -46,6 +46,25 @@ export const EMPTY_FACTS: DeepwikiFacts = {
   raw_answers: {},
 };
 
+const EXPECTED_TIER3_SECTIONS = 5;
+
+/** tier-3 必须真正拿到核心移植面和大部分子系统事实，否则不应伪装成代码深析。 */
+export function deepEvidenceCoverage(facts: DeepwikiFacts): {
+  complete: boolean;
+  core: number;
+  subsystems: number;
+  expectedSubsystems: number;
+} {
+  const core = Number(facts.harmony !== null) + Number(facts.porting !== null);
+  const subsystems = Object.keys(facts.extra ?? {}).length;
+  return {
+    complete: facts.indexed && core === 2 && subsystems >= 4,
+    core,
+    subsystems,
+    expectedSubsystems: EXPECTED_TIER3_SECTIONS,
+  };
+}
+
 export type CollectDepth = 'toc' | 'evidence' | 'deep';
 
 /**

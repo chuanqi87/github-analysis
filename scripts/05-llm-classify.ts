@@ -11,6 +11,12 @@ import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 import { PROMPT_VERSION } from '@/lib/llm/prompts';
 import { CLASSIFY_MODEL_NAME } from '@/lib/llm/provider';
+import {
+  buildEvidenceSnapshot,
+  captureAnalysisExecution,
+  flushAnalysisExecutionLogs,
+  type AnalysisExecutionRow,
+} from '@/lib/pipeline/analysis-log';
 
 async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
   const client = getAdminClient();
@@ -60,10 +66,12 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
     let failed = 0;
     let newCategories = 0;
     const rows: Record<string, unknown>[] = [];
+    const executionRows: AnalysisExecutionRow[] = [];
 
     await pMap(
       repos,
       async (repo) => {
+        const attemptStartedAt = new Date().toISOString();
         const sig = signalsFor(signals, repo.id);
         const analyzeRepo: AnalyzeRepo = {
           full_name: repo.full_name,
@@ -77,6 +85,18 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
         const hash = classifyInputHash(analyzeRepo, sig, repo.readme_text, facts);
         if (existing.get(repo.id) === hash) {
           skipped++;
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 1,
+            status: 'skipped',
+            model: CLASSIFY_MODEL_NAME,
+            promptVersion: PROMPT_VERSION,
+            inputHash: hash,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            startedAt: attemptStartedAt,
+          }));
           return;
         }
         try {
@@ -107,10 +127,38 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
             tokens_out: out.tokens_out,
             analyzed_at: new Date().toISOString(),
           });
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 1,
+            status: 'success',
+            model: out.model,
+            promptVersion: out.prompt_version,
+            inputHash: out.input_hash,
+            trace: out.trace,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            output: out.data,
+            tokensIn: out.tokens_in,
+            tokensOut: out.tokens_out,
+          }));
           analyzed++;
           if (analyzed % 50 === 0) log(`  已分析 ${analyzed}(跳过 ${skipped})`);
         } catch (err) {
           failed++;
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 1,
+            status: 'failed',
+            model: CLASSIFY_MODEL_NAME,
+            promptVersion: PROMPT_VERSION,
+            inputHash: hash,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            error: String(err),
+            startedAt: attemptStartedAt,
+          }));
           log(`  分类失败 ${repo.full_name}: ${String(err).slice(0, 120)}`);
         }
       },
@@ -118,6 +166,7 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
     );
 
     await upsertBatched('analysis', rows, { onConflict: 'repository_id,tier,prompt_version,model' });
+    await flushAnalysisExecutionLogs(executionRows);
     await finishRun(runId, 'success', { analyzed, skipped, failed, archived: archivedCount, newCategories });
     log(`llm-classify 完成:分析 ${analyzed}、跳过 ${skipped}、失败 ${failed}、归档 ${archivedCount}、新建分类 ${newCategories}`);
   } catch (err) {

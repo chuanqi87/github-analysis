@@ -9,7 +9,8 @@ GitHub Actions(计算)                Supabase(数据 + Auth)          GitHub Pa
 ─────────────────────────           ────────────────────           ────────────────────
 baseline + 4-source trending  ──▶  analysis_queue 候选池      ◀──   Next.js 静态站点
 → tier1(400) → tier2(100)            analysis / daily_metrics          (antd + ProComponents)
-→ tier3(20) → score                  harmony_overrides(人工)  ◀──   /admin 登录后直接写
+→ tier3(20) → score                  execution_logs / session  ◀──   /admin 可追踪执行链路
+                                      harmony_overrides(人工)
 ```
 
 - **计算**:GitHub Actions 跑管道脚本(service-role key 写库)。
@@ -65,15 +66,18 @@ pnpm pipeline --stage=daily                     # 每日分层分析(默认 400/
 pnpm pipeline --stage=daily --preliminary-limit=50 --deep-limit=10 --tier3-limit=2
 pnpm pipeline --stage=weekly-trending            # 单独刷新多源热点
 pnpm pipeline --stage=refresh-pool               # 重建候选池派生状态
+pnpm audit:session <session_id>                   # 复盘逐项目 Prompt/输出/耗时/Token
 ```
 
 推荐使用 `--stage=daily`。它先完成基线与热点发现，再从 `analysis_queue` 选取尚未完成当前层级的项目；已分析项目不会占住每日名额。默认预算为 tier-1 初筛 400、tier-2 深评 100、tier-3 代码深析 20，可分别用 `--preliminary-limit`、`--deep-limit`、`--tier3-limit` 调整。积压清空后，只有仍处热点且代码有变化的项目会重新入池。
 
 旧全量管道仍可用:`fetch-top → enrich → build-registry → deepwiki → harmony-signals → fetch-readme → mark-archived → llm-classify → llm-evaluate → score`。`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
 
-`deepwiki` 阶段从 [DeepWiki](https://deepwiki.com) 拉取代码级事实(模块地图、鸿蒙痕迹、平台抽象层、阻塞依赖),免费且不烧 token,让后续 LLM 阶段基于真实代码结构判断而非靠 README 猜。`--evidence-limit=N` 控制多少个仓库做定向提问(默认 200,其余只取廉价的模块地图)。
+`deepwiki` 阶段从 [DeepWiki](https://deepwiki.com) 拉取代码级事实(模块地图、鸿蒙痕迹、平台抽象层、阻塞依赖),免费且不烧 token,让后续 LLM 阶段基于真实代码结构判断而非靠 README 猜。`--evidence-limit=N` 控制多少个仓库做定向提问(默认 200,其余只取廉价的模块地图)。缓存按 `toc < evidence < deep` 分级，深层事实不会被后续浅层任务覆盖；服务端包装的 429/5xx 会错峰重试而不是写成事实。
 
-`deepwiki-deep` 是 tier-3 深度评估(逐子系统问询 + 一次结构化定级),按需触发,不在 `--stage=all` 里。
+`deepwiki-deep` 是 tier-3 深度评估(逐子系统问询 + 一次结构化定级),按需触发,不在 `--stage=all` 里。只有同时取得鸿蒙证据、移植面和至少 4/5 个子系统事实的项目才会完成深析；证据不足或失败会从后备候选继续补位。
+
+每次管道进程都有统一 `session_id`。子阶段写入 `pipeline_runs`，逐项目 AI 调用写入 `analysis_execution_logs`（实际 System/User Prompt、结构化输出、证据覆盖、耗时、Token、失败原因）；本地同时生成 `reports/logs/<session_id>.jsonl`。管理台“最近运行记录”可直接复制 session，`pnpm audit:session <session_id>` 会生成 `reports/session-audits/` 下的 JSON 和 Markdown 质量报告。
 
 ### 推荐的 MVP 验证顺序(先小切片)
 1. `--stage=fetch-top --limit=500` → `--stage=enrich --limit=500`

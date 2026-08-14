@@ -14,6 +14,7 @@ import { stableHash } from '@/lib/hash';
 import { deepwikiFingerprint, type DeepwikiFacts } from '@/lib/deepwiki';
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
+import type { ModelTrace } from '@/lib/pipeline/analysis-log';
 
 export interface AnalyzeRepo {
   full_name: string;
@@ -31,6 +32,7 @@ export interface LlmOutput<T> {
   tokens_out: number | null;
   model: string;
   prompt_version: string;
+  trace: ModelTrace;
 }
 
 function signalFingerprint(sig: CollectedSignals) {
@@ -72,6 +74,9 @@ export async function classifyRepo(
   readme: string | null,
   facts?: DeepwikiFacts | null,
 ): Promise<LlmOutput<ClassifyResult>> {
+  const system = systemPrompt(1, categoryTree);
+  const prompt = buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER1), facts, 1);
+  const startedAt = new Date();
   const result = await withRetry(
     () =>
       llmLimiter.schedule(() =>
@@ -80,14 +85,15 @@ export async function classifyRepo(
           schema: classifySchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(1, categoryTree),
-          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER1), facts, 1),
+          system,
+          prompt,
           maxRetries: 1,
         }),
       ),
     { retries: 2, label: `classify ${repo.full_name}` },
   );
   const usage = result.usage as Record<string, number> | undefined;
+  const finishedAt = new Date();
   return {
     data: result.object,
     input_hash: classifyInputHash(repo, sig, readme, facts),
@@ -95,5 +101,12 @@ export async function classifyRepo(
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: CLASSIFY_MODEL_NAME,
     prompt_version: PROMPT_VERSION,
+    trace: {
+      started_at: startedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      system_prompt: system,
+      user_prompt: prompt,
+    },
   };
 }

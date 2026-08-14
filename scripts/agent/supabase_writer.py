@@ -106,6 +106,7 @@ def write_tier3_analysis(
         "recommended_approach": analysis.get("recommended_approach", ""),
         "reasoning": analysis.get("reasoning", ""),
         "confidence": analysis.get("confidence", 0),
+        "analyzed_at": datetime.utcnow().isoformat(),
         # Tier-3 专有字段
         "project_type": analysis.get("project_type", ""),
         "tech_stack": analysis.get("tech_stack", {}),
@@ -114,7 +115,8 @@ def write_tier3_analysis(
     }
     
     # 写入 Supabase
-    url = f"{SUPABASE_URL}/rest/v1/analysis"
+    conflict_columns = "repository_id,tier,prompt_version,model"
+    url = f"{SUPABASE_URL}/rest/v1/analysis?on_conflict={conflict_columns}"
     resp = requests.post(
         url,
         headers=_headers(),

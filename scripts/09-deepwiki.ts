@@ -27,19 +27,39 @@ export function deepwikiInputHash(repo: StageRepo, depth: CollectDepth): string 
   });
 }
 
-async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
+interface ExistingDeepwikiCache {
+  inputHash: string;
+  questionVersion: string;
+  depth: CollectDepth;
+  sourcePushedAt: string | null;
+}
+
+const DEPTH_RANK: Record<CollectDepth, number> = { toc: 1, evidence: 2, deep: 3 };
+
+async function loadExistingHashes(ids: number[]): Promise<Map<number, ExistingDeepwikiCache>> {
   const client = getAdminClient();
-  const map = new Map<number, string>();
+  const map = new Map<number, ExistingDeepwikiCache>();
   // PostgREST 默认 1000 行上限,按 800 分块(与 _data.ts 一致)
   for (let i = 0; i < ids.length; i += 800) {
     const chunk = ids.slice(i, i + 800);
     const { data, error } = await client
       .from('deepwiki_analysis')
-      .select('repository_id, input_hash')
+      .select('repository_id,input_hash,question_version,depth,source_pushed_at')
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 deepwiki_analysis 失败:${error.message}`);
-    for (const r of (data ?? []) as { repository_id: number; input_hash: string }[]) {
-      map.set(r.repository_id, r.input_hash);
+    for (const r of (data ?? []) as {
+      repository_id: number;
+      input_hash: string;
+      question_version: string;
+      depth: CollectDepth;
+      source_pushed_at: string | null;
+    }[]) {
+      map.set(r.repository_id, {
+        inputHash: r.input_hash,
+        questionVersion: r.question_version,
+        depth: r.depth,
+        sourcePushedAt: r.source_pushed_at,
+      });
     }
   }
   return map;
@@ -58,7 +78,9 @@ export async function runDeepwiki(opts: StageOpts = {}): Promise<void> {
     const evidenceLimit = opts.evidenceLimit ?? DEFAULT_EVIDENCE_LIMIT;
     const depthFor = (idx: number): CollectDepth => (idx < evidenceLimit ? 'evidence' : 'toc');
 
-    const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(active.map((r) => r.id));
+    const existing = opts.force
+      ? new Map<number, ExistingDeepwikiCache>()
+      : await loadExistingHashes(active.map((r) => r.id));
 
     log(
       `DeepWiki 取数:${active.length} 个仓库(前 ${Math.min(evidenceLimit, active.length)} 个做定向提问)…`,
@@ -75,7 +97,12 @@ export async function runDeepwiki(opts: StageOpts = {}): Promise<void> {
       async (repo, idx) => {
         const depth = depthFor(idx);
         const hash = deepwikiInputHash(repo, depth);
-        if (existing.get(repo.id) === hash) {
+        const cached = existing.get(repo.id);
+        const cacheCoversRequest =
+          cached?.questionVersion === QUESTION_VERSION &&
+          cached.sourcePushedAt === repo.pushed_at &&
+          DEPTH_RANK[cached.depth] >= DEPTH_RANK[depth];
+        if (cached?.inputHash === hash || cacheCoversRequest) {
           skipped++;
           return;
         }
@@ -106,6 +133,8 @@ export async function runDeepwiki(opts: StageOpts = {}): Promise<void> {
             extra: f.extra,
             raw_answers: f.raw_answers,
             question_version: QUESTION_VERSION,
+            depth,
+            source_pushed_at: repo.pushed_at,
             input_hash: hash,
             fetched_at: new Date().toISOString(),
           });

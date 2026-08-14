@@ -58,6 +58,9 @@ export async function evaluateRepo(
   categoryStats?: string | null,
   facts?: DeepwikiFacts | null,
 ): Promise<LlmOutput<EvaluateResult>> {
+  const system = systemPrompt(2, categoryTree, { categoryStats });
+  const prompt = buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER2), facts, 2);
+  const startedAt = new Date();
   const result = await withRetry(
     () =>
       llmLimiter.schedule(() =>
@@ -66,14 +69,15 @@ export async function evaluateRepo(
           schema: evaluateSchema,
           // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
           mode: 'json',
-          system: systemPrompt(2, categoryTree, { categoryStats }),
-          prompt: buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER2), facts, 2),
+          system,
+          prompt,
           maxRetries: 1,
         }),
       ),
     { retries: 2, label: `evaluate ${repo.full_name}` },
   );
   const usage = result.usage as Record<string, number> | undefined;
+  const finishedAt = new Date();
   return {
     data: result.object,
     input_hash: evaluateInputHash(repo, sig, readme, facts),
@@ -81,5 +85,12 @@ export async function evaluateRepo(
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: EVALUATE_MODEL_NAME,
     prompt_version: PROMPT_VERSION,
+    trace: {
+      started_at: startedAt.toISOString(),
+      finished_at: finishedAt.toISOString(),
+      duration_ms: finishedAt.getTime() - startedAt.getTime(),
+      system_prompt: system,
+      user_prompt: prompt,
+    },
   };
 }

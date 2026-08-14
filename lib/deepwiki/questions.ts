@@ -9,7 +9,7 @@
 // 改动本文件的任何问题文本都必须 bump QUESTION_VERSION,否则旧结果不会失效。
 
 /** 提问版本;参与 input_hash,bump 后下次管道会重新问。 */
-export const QUESTION_VERSION = 'q1';
+export const QUESTION_VERSION = 'q2';
 
 /** 所有问题共用的输出纪律。实测「不要编造路径」这句显著有效(5 个反例中 4 个正确返回空数组)。 */
 const OUTPUT_DISCIPLINE = [

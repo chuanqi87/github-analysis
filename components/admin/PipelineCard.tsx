@@ -11,6 +11,7 @@ import {
 import { fetchPipelineRuns, type PipelineRun } from '@/lib/queries';
 import { triggerGitHubWorkflow } from '@/lib/github/actions';
 import { GH_ACTIONS_URL } from '@/lib/config';
+import ManualCodeAnalysisCard from '@/components/admin/ManualCodeAnalysisCard';
 
 const WORKFLOWS = [
   {
@@ -65,6 +66,17 @@ const RUN_COLUMNS = [
     dataIndex: 'status',
     width: 90,
     render: (v: string) => <Tag color={STATUS_COLORS[v] ?? 'default'}>{v}</Tag>,
+  },
+  {
+    title: 'Session',
+    dataIndex: 'session_id',
+    width: 190,
+    render: (value: string | null) =>
+      value ? (
+        <Typography.Text code copyable={{ text: value }} ellipsis={{ tooltip: value }} style={{ maxWidth: 170 }}>
+          {value}
+        </Typography.Text>
+      ) : '-'
   },
   {
     title: '开始时间',
@@ -143,79 +155,82 @@ export default function PipelineCard() {
   };
 
   return (
-    <Card
-      title={
-        <Space>
-          <ThunderboltOutlined />
-          Pipeline 管理
-        </Space>
-      }
-      style={{ marginBottom: 16 }}
-    >
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        {WORKFLOWS.map((wf, i) => (
-          <Col key={i} xs={24} sm={12} md={6}>
-            <Card
-              size="small"
-              hoverable
-              style={{ height: '100%' }}
-              actions={[
-                <Button
-                  key="run"
-                  type="primary"
-                  size="small"
-                  icon={wf.icon}
-                  loading={triggering === wf.id}
-                  onClick={() => handleTrigger(wf.id, wf.label, 'inputs' in wf ? wf.inputs : undefined)}
-                >
-                  触发
-                </Button>,
-              ]}
-            >
-              <Card.Meta
-                title={<Tag color={wf.color}>{wf.label}</Tag>}
-                description={
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {wf.desc}
-                  </Typography.Text>
-                }
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      <Descriptions size="small" column={1} style={{ marginBottom: 16 }} labelStyle={{ fontWeight: 500 }}>
-        <Descriptions.Item label="提示">
-          <Typography.Text type="secondary">
-            触发后任务将在 GitHub Actions 中运行，请前往{' '}
-            <a href={GH_ACTIONS_URL} target="_blank" rel="noreferrer">
-              Actions 页面
-            </a>{' '}
-            查看详细日志。若未配置 Token，请设置环境变量 <code>NEXT_PUBLIC_GH_TRIGGER_TOKEN</code>。
-          </Typography.Text>
-        </Descriptions.Item>
-      </Descriptions>
-
+    <>
+      <ManualCodeAnalysisCard onTriggered={() => setTimeout(loadRuns, 3000)} />
       <Card
-        title="最近运行记录"
-        size="small"
-        extra={
-          <Button size="small" icon={<ReloadOutlined />} onClick={loadRuns} loading={loadingRuns}>
-            刷新
-          </Button>
+        title={
+          <Space>
+            <ThunderboltOutlined />
+            Pipeline 管理
+          </Space>
         }
+        style={{ marginBottom: 16 }}
       >
-        <Table<PipelineRun>
-          rowKey="id"
-          dataSource={runs}
-          columns={RUN_COLUMNS}
-          loading={loadingRuns}
-          pagination={false}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          {WORKFLOWS.map((wf, i) => (
+            <Col key={i} xs={24} sm={12} md={6}>
+              <Card
+                size="small"
+                hoverable
+                style={{ height: '100%' }}
+                actions={[
+                  <Button
+                    key="run"
+                    type="primary"
+                    size="small"
+                    icon={wf.icon}
+                    loading={triggering === wf.id}
+                    onClick={() => handleTrigger(wf.id, wf.label, 'inputs' in wf ? wf.inputs : undefined)}
+                  >
+                    触发
+                  </Button>,
+                ]}
+              >
+                <Card.Meta
+                  title={<Tag color={wf.color}>{wf.label}</Tag>}
+                  description={
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {wf.desc}
+                    </Typography.Text>
+                  }
+                />
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        <Descriptions size="small" column={1} style={{ marginBottom: 16 }} labelStyle={{ fontWeight: 500 }}>
+          <Descriptions.Item label="提示">
+            <Typography.Text type="secondary">
+              触发后任务将在 GitHub Actions 中运行，请前往{' '}
+              <a href={GH_ACTIONS_URL} target="_blank" rel="noreferrer">
+                Actions 页面
+              </a>{' '}
+              查看详细日志。若未配置 Token，请设置环境变量 <code>NEXT_PUBLIC_GH_TRIGGER_TOKEN</code>。
+            </Typography.Text>
+          </Descriptions.Item>
+        </Descriptions>
+
+        <Card
+          title="最近运行记录"
           size="small"
-          scroll={{ x: 600 }}
-        />
+          extra={
+            <Button size="small" icon={<ReloadOutlined />} onClick={loadRuns} loading={loadingRuns}>
+              刷新
+            </Button>
+          }
+        >
+          <Table<PipelineRun>
+            rowKey="id"
+            dataSource={runs}
+            columns={RUN_COLUMNS}
+            loading={loadingRuns}
+            pagination={false}
+            size="small"
+            scroll={{ x: 600 }}
+          />
+        </Card>
       </Card>
-    </Card>
+    </>
   );
 }

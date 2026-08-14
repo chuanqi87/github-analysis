@@ -5,6 +5,7 @@ import { DEEP_PROMPT_VERSION } from '@/lib/llm/deep-evaluate';
 const PAGE_SIZE = 1000;
 const DAY_MS = 86_400_000;
 const REANALYSIS_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+export const TIER3_MIN_SCORE = 0.62;
 
 interface RepoCandidate {
   id: number;
@@ -20,6 +21,7 @@ interface AnalysisCandidate {
   mobile_relevance: number | null;
   feasibility: number | null;
   ecosystem_gap: number | null;
+  harmony_leverage: number | null;
   confidence: number | null;
   prompt_version: string;
   created_at: string;
@@ -70,6 +72,7 @@ export interface CandidateScoreInput {
   mobileRelevance?: number | null;
   feasibility?: number | null;
   ecosystemGap?: number | null;
+  harmonyLeverage?: number | null;
   confidence?: number | null;
 }
 
@@ -83,12 +86,21 @@ export function deriveCandidateScores(input: CandidateScoreInput): {
   const mobile = clamp01(input.mobileRelevance ?? 0.4);
   const feasible = clamp01(input.feasibility ?? 0.5);
   const gap = clamp01(input.ecosystemGap ?? 0.5);
+  const leverage = clamp01(input.harmonyLeverage ?? 0.3);
   const confidence = clamp01(input.confidence ?? 0.5);
   return {
     discoveryScore: clamp01(0.5 * input.hotScore + 0.2 * pop + 0.2 * active + 0.1 * (input.sourceCount > 1 ? 1 : 0)),
     preliminaryScore: clamp01(0.3 * input.hotScore + 0.25 * mobile + 0.2 * feasible + 0.15 * pop + 0.1 * confidence),
-    // tier-3 必须以鸿蒙价值/可行性/缺口为主，热点只负责加速，不能让低相关热项挤掉高价值项目。
-    deepScore: clamp01(0.15 * input.hotScore + 0.3 * mobile + 0.25 * feasible + 0.2 * gap + 0.1 * confidence),
+    // tier-3 看“鸿蒙专属增量”而不是“容易适配”。纯平台无关工具即使可行性很高，
+    // 没有 ArkUI / Node-API / 平台后端 / 多设备等专属交付面也不能占据深析名额。
+    deepScore: clamp01(
+      0.1 * input.hotScore +
+        0.2 * mobile +
+        0.1 * feasible +
+        0.15 * gap +
+        0.4 * leverage +
+        0.05 * confidence,
+    ),
   };
 }
 
@@ -169,7 +181,7 @@ export async function refreshAnalysisQueue(): Promise<CandidatePoolStats> {
     pageAll<AnalysisCandidate>((from, to) =>
       client
         .from('analysis')
-        .select('repository_id,tier,prompt_version,mobile_relevance,feasibility,ecosystem_gap,confidence,created_at,analyzed_at')
+        .select('repository_id,tier,prompt_version,mobile_relevance,feasibility,ecosystem_gap,harmony_leverage,confidence,created_at,analyzed_at')
         .order('analyzed_at', { ascending: false })
         .range(from, to),
     ),
@@ -217,6 +229,7 @@ export async function refreshAnalysisQueue(): Promise<CandidatePoolStats> {
     const mobile = clamp01(analysis?.mobile_relevance ?? 0.4);
     const feasible = clamp01(analysis?.feasibility ?? 0.5);
     const gap = clamp01(analysis?.ecosystem_gap ?? 0.5);
+    const leverage = clamp01(analysis?.harmony_leverage ?? 0.3);
     const confidence = clamp01(analysis?.confidence ?? 0.5);
     const { discoveryScore, preliminaryScore, deepScore } = deriveCandidateScores({
       stars: repo.stars,
@@ -226,6 +239,7 @@ export async function refreshAnalysisQueue(): Promise<CandidatePoolStats> {
       mobileRelevance: mobile,
       feasibility: feasible,
       ecosystemGap: gap,
+      harmonyLeverage: leverage,
       confidence,
     });
     const lastAnalyzedAt = analysis ? new Date(analysis.analyzed_at ?? analysis.created_at).getTime() : 0;
@@ -252,6 +266,7 @@ export async function refreshAnalysisQueue(): Promise<CandidatePoolStats> {
     if (trend.weeks > 1) reasons.push(`连续/累计 ${trend.weeks} 周上榜`);
     if (mobile >= 0.7) reasons.push(`鸿蒙端侧相关度 ${mobile.toFixed(2)}`);
     if (gap >= 0.7) reasons.push(`鸿蒙生态缺口 ${gap.toFixed(2)}`);
+    if (leverage >= 0.7) reasons.push(`鸿蒙专属增量 ${leverage.toFixed(2)}`);
     if (active >= 0.8) reasons.push('近30天活跃');
     if (pop >= 0.75) reasons.push('高影响力项目');
 
@@ -307,4 +322,4 @@ export const selectTier2Candidates = (limit: number): Promise<number[]> =>
   selectIds('preliminary', 'preliminary_score', limit);
 
 export const selectTier3Candidates = (limit: number): Promise<number[]> =>
-  selectIds('deep', 'deep_score', limit, 0.58);
+  selectIds('deep', 'deep_score', limit, TIER3_MIN_SCORE);

@@ -7,9 +7,17 @@ import {
   selectPreliminaryCandidates,
   selectTier2Candidates,
   selectTier3Candidates,
+  TIER3_MIN_SCORE,
 } from '@/lib/pipeline/candidates';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
-import { log, today, todayStartIso, type StageOpts } from '@/scripts/_common';
+import {
+  getPipelineSessionId,
+  log,
+  today,
+  todayStartIso,
+  writeSessionEvent,
+  type StageOpts,
+} from '@/scripts/_common';
 import { runFetchTop } from '@/scripts/01-fetch-top';
 import { runEnrich } from '@/scripts/02-enrich';
 import { runHarmonySignals } from '@/scripts/03-harmony-signals';
@@ -84,7 +92,7 @@ export async function writeDailyMetrics(failedCountOverride?: number): Promise<R
     countRows('trending_snapshots', (query) => query.eq('captured_date', date).eq('promoted', true)),
     countRows('analysis_queue', (query) => query.eq('state', 'discovered')),
     countRows('analysis_queue', (query) => query.eq('state', 'preliminary')),
-    countRows('analysis_queue', (query) => query.eq('state', 'deep').gte('deep_score', 0.58)),
+    countRows('analysis_queue', (query) => query.eq('state', 'deep').gte('deep_score', TIER3_MIN_SCORE)),
     failedCountPromise,
   ]);
   const metrics = {
@@ -119,7 +127,15 @@ export async function runDailyAnalysis(opts: StageOpts = {}): Promise<void> {
   const deepLimit = opts.deepLimit ?? DEFAULT_DEEP_LIMIT;
   const tier3Limit = opts.tier3Limit ?? DEFAULT_TIER3_LIMIT;
   try {
+    const sessionId = getPipelineSessionId();
     log(`每日分层分析预算:初筛 ${preliminaryLimit}、深评 ${deepLimit}、代码深析 ${tier3Limit}`);
+    log(`执行 session:${sessionId}`);
+    writeSessionEvent({
+      type: 'daily_budget',
+      preliminary_limit: preliminaryLimit,
+      deep_limit: deepLimit,
+      tier3_limit: tier3Limit,
+    });
 
     // 发现层：高星基线保证覆盖，多源热点补充快速增长和新项目。
     await runFetchTop();
@@ -129,6 +145,7 @@ export async function runDailyAnalysis(opts: StageOpts = {}): Promise<void> {
 
     // tier-1：先选择未分析项目，再做昂贵取数，避免全库重复扫描。
     const preliminaryIds = await selectPreliminaryCandidates(preliminaryLimit);
+    writeSessionEvent({ type: 'candidate_batch', tier: 1, repository_ids: preliminaryIds });
     if (preliminaryIds.length) {
       log(`初筛批次 ${preliminaryIds.length} 个`);
       await runEnrich({ ids: preliminaryIds });
@@ -141,6 +158,7 @@ export async function runDailyAnalysis(opts: StageOpts = {}): Promise<void> {
     // tier-2：用 tier-1 的端侧价值/可行性和热点证据选高价值项目。
     pool = await refreshAnalysisQueue();
     const deepIds = await selectTier2Candidates(deepLimit);
+    writeSessionEvent({ type: 'candidate_batch', tier: 2, repository_ids: deepIds });
     if (deepIds.length) {
       log(`高价值深评批次 ${deepIds.length} 个`);
       await runDeepwiki({ ids: deepIds, evidenceLimit: deepIds.length });
@@ -149,16 +167,23 @@ export async function runDailyAnalysis(opts: StageOpts = {}): Promise<void> {
 
     // tier-3：只对综合分过线的项目逐子系统问代码，输出可执行鸿蒙契合路径。
     pool = await refreshAnalysisQueue();
-    const tier3Ids = await selectTier3Candidates(tier3Limit);
+    const tier3Ids = await selectTier3Candidates(tier3Limit * 2);
+    writeSessionEvent({ type: 'candidate_batch', tier: 3, repository_ids: tier3Ids });
     if (tier3Ids.length) {
-      log(`代码级深析批次 ${tier3Ids.length} 个`);
-      await runDeepwikiDeep({ ids: tier3Ids });
+      log(`代码级深析目标 ${tier3Limit} 个，后备候选 ${tier3Ids.length} 个`);
+      await runDeepwikiDeep({ ids: tier3Ids, limit: tier3Limit });
     }
 
     await refreshAnalysisQueue();
     await runScore();
     const metrics = await writeDailyMetrics(0);
-    await finishRun(runId, 'success', { ...metrics, preliminary_budget: preliminaryLimit, deep_budget: deepLimit, tier3_budget: tier3Limit });
+    await finishRun(runId, 'success', {
+      ...metrics,
+      session_id: sessionId,
+      preliminary_budget: preliminaryLimit,
+      deep_budget: deepLimit,
+      tier3_budget: tier3Limit,
+    });
     log(`每日分层分析完成:${JSON.stringify(metrics)}`);
   } catch (error) {
     try {

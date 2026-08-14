@@ -5,7 +5,7 @@
 //
 // 未被 DeepWiki 索引的仓库在这里会被跳过并列出,交给 scripts/agent/ 的兜底路径。
 import 'dotenv/config';
-import { collectDeepwiki } from '@/lib/deepwiki';
+import { collectDeepwiki, deepEvidenceCoverage, QUESTION_VERSION, type DeepwikiFacts } from '@/lib/deepwiki';
 import { deepEvaluateRepo, deepEvaluateInputHash, DEEP_PROMPT_VERSION } from '@/lib/llm/deep-evaluate';
 import type { AnalyzeRepo } from '@/lib/llm/classify';
 import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
@@ -16,9 +16,76 @@ import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
 import { refreshAnalysisQueue, selectTier3Candidates } from '@/lib/pipeline/candidates';
 import { EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
+import { stableHash } from '@/lib/hash';
+import {
+  buildEvidenceSnapshot,
+  captureAnalysisExecution,
+  flushAnalysisExecutionLogs,
+  type AnalysisExecutionRow,
+} from '@/lib/pipeline/analysis-log';
 
 /** tier-3 成本比 tier-2 高(7 问 + 强模型),默认只做 top-30。 */
 const DEFAULT_LIMIT = 30;
+const CACHE_DEPTH_RANK = { toc: 1, evidence: 2, deep: 3 } as const;
+
+interface DeepwikiCacheState {
+  depth: keyof typeof CACHE_DEPTH_RANK;
+  question_version: string;
+  source_pushed_at: string | null;
+}
+
+async function loadDeepwikiCacheState(ids: number[]): Promise<Map<number, DeepwikiCacheState>> {
+  const result = new Map<number, DeepwikiCacheState>();
+  const client = getAdminClient();
+  for (let offset = 0; offset < ids.length; offset += 800) {
+    const { data, error } = await client
+      .from('deepwiki_analysis')
+      .select('repository_id,depth,question_version,source_pushed_at')
+      .in('repository_id', ids.slice(offset, offset + 800));
+    if (error) throw new Error(`加载 DeepWiki 缓存深度失败:${error.message}`);
+    for (const row of (data ?? []) as (DeepwikiCacheState & { repository_id: number })[]) {
+      result.set(row.repository_id, row);
+    }
+  }
+  return result;
+}
+
+function deepwikiCacheRow(
+  repositoryId: number,
+  pushedAt: string | null,
+  inputHash: string,
+  facts: DeepwikiFacts,
+): Record<string, unknown> {
+  const coverage = deepEvidenceCoverage(facts);
+  const depth = coverage.complete ? 'deep' : coverage.core === 2 ? 'evidence' : 'toc';
+  return {
+    repository_id: repositoryId,
+    indexed: facts.indexed,
+    wiki_toc: facts.wiki_toc,
+    harmony_scope: facts.harmony?.harmony_scope ?? null,
+    harmony_paths: facts.harmony?.harmony_paths ?? null,
+    harmony_quote: facts.harmony?.harmony_quote ?? null,
+    harmony_declares_support: facts.harmony?.declares_harmony_support ?? null,
+    ohos_imports: facts.harmony?.ohos_imports ?? null,
+    project_type: facts.porting?.project_type ?? null,
+    languages: facts.porting?.languages ?? null,
+    native_code_ratio: facts.porting?.native_code_ratio ?? null,
+    has_platform_abstraction: facts.porting?.has_platform_abstraction ?? null,
+    platform_layer_paths: facts.porting?.platform_layer_paths ?? null,
+    existing_platform_backends: facts.porting?.existing_platform_backends ?? null,
+    portable_core_paths: facts.porting?.portable_core_paths ?? null,
+    blocking_deps: facts.porting?.blocking_deps ?? null,
+    platform_apis_used: facts.porting?.platform_apis_used ?? null,
+    conditional_compilation: facts.porting?.conditional_compilation ?? null,
+    extra: facts.extra,
+    raw_answers: facts.raw_answers,
+    question_version: QUESTION_VERSION,
+    depth,
+    source_pushed_at: pushedAt,
+    input_hash: inputHash,
+    fetched_at: new Date().toISOString(),
+  };
+}
 
 async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
   const client = getAdminClient();
@@ -45,31 +112,35 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
   try {
     const limit = opts.limit ?? DEFAULT_LIMIT;
     if (!opts.ids?.length) await refreshAnalysisQueue();
-    const selectedIds = opts.ids?.length ? opts.ids : await selectTier3Candidates(limit);
+    // 多取一倍后备候选：未索引、证据不足或模型失败时继续向后补，尽量兑现每日配额。
+    const selectedIds = opts.ids?.length ? opts.ids : await selectTier3Candidates(limit * 2);
     const all = await loadStageRepos({ ids: selectedIds });
     const active = all.filter((r) => !r.is_archived);
     // 候选池已排除现有 tier-3，并按热点 + 鸿蒙价值排序；这里不再从 Star 榜首反复截断。
-    const candidates = active.slice(0, limit);
+    const candidates = active;
 
     const ids = candidates.map((r) => r.id);
     const signals = await loadSignalsMap(ids);
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
+    const deepwikiCache = await loadDeepwikiCacheState(ids);
 
     const adminClient = getAdminClient();
     const categoryTree = await loadCategoryTree(adminClient);
 
-    log(`tier-3 深度评估 ${candidates.length} 个候选(DeepWiki 逐子系统问询 + 百炼定级)…`);
+    log(`tier-3 目标 ${limit} 个，准备 ${candidates.length} 个候选(含证据不足/失败后备)…`);
 
     let analyzed = 0;
     let skipped = 0;
     let failed = 0;
     let newCategories = 0;
     const notIndexed: string[] = [];
+    const insufficientEvidence: string[] = [];
     const rows: Record<string, unknown>[] = [];
+    const deepwikiRows: Record<string, unknown>[] = [];
+    const executionRows: AnalysisExecutionRow[] = [];
 
-    await pMap(
-      candidates,
-      async (repo) => {
+    const analyzeCandidate = async (repo: (typeof candidates)[number]) => {
+        const attemptStartedAt = new Date().toISOString();
         const sig = signalsFor(signals, repo.id);
         const analyzeRepo: AnalyzeRepo = {
           full_name: repo.full_name,
@@ -83,14 +154,76 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
         try {
           // 深度档:7 问并发,约 15s
           const facts = await collectDeepwiki(repo.full_name, 'deep');
+          const deepwikiHash = stableHash({
+            v: QUESTION_VERSION,
+            full: repo.full_name,
+            pushed: repo.pushed_at,
+            depth: 'deep',
+          });
+          const cacheRow = deepwikiCacheRow(repo.id, repo.pushed_at, deepwikiHash, facts);
+          const previousCache = deepwikiCache.get(repo.id);
+          const newDepth = cacheRow.depth as keyof typeof CACHE_DEPTH_RANK;
+          const preservesNewerDepth =
+            previousCache?.question_version === QUESTION_VERSION &&
+            previousCache.source_pushed_at === repo.pushed_at &&
+            CACHE_DEPTH_RANK[previousCache.depth] > CACHE_DEPTH_RANK[newDepth];
+          if (!preservesNewerDepth) deepwikiRows.push(cacheRow);
           if (!facts.indexed) {
             notIndexed.push(repo.full_name);
+            skipped++;
+            executionRows.push(captureAnalysisExecution({
+              pipelineRunId: runId,
+              repositoryId: repo.id,
+              repositoryName: repo.full_name,
+              tier: 3,
+              status: 'skipped',
+              model: EVALUATE_MODEL_NAME,
+              promptVersion: DEEP_PROMPT_VERSION,
+              evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+              error: 'DeepWiki 未索引',
+              startedAt: attemptStartedAt,
+            }));
+            return;
+          }
+
+          const coverage = deepEvidenceCoverage(facts);
+          if (!coverage.complete) {
+            insufficientEvidence.push(repo.full_name);
+            skipped++;
+            executionRows.push(captureAnalysisExecution({
+              pipelineRunId: runId,
+              repositoryId: repo.id,
+              repositoryName: repo.full_name,
+              tier: 3,
+              status: 'skipped',
+              model: EVALUATE_MODEL_NAME,
+              promptVersion: DEEP_PROMPT_VERSION,
+              evidence: {
+                ...buildEvidenceSnapshot(sig, facts, repo.readme_text),
+                coverage,
+              },
+              error: `代码证据不足:核心 ${coverage.core}/2，子系统 ${coverage.subsystems}/${coverage.expectedSubsystems}`,
+              startedAt: attemptStartedAt,
+            }));
+            log(`  换下 ${repo.full_name}:代码证据不足(核心 ${coverage.core}/2，子系统 ${coverage.subsystems}/${coverage.expectedSubsystems})`);
             return;
           }
 
           const hash = deepEvaluateInputHash(analyzeRepo, sig, repo.readme_text, facts);
           if (existing.get(repo.id) === hash) {
             skipped++;
+            executionRows.push(captureAnalysisExecution({
+              pipelineRunId: runId,
+              repositoryId: repo.id,
+              repositoryName: repo.full_name,
+              tier: 3,
+              status: 'skipped',
+              model: EVALUATE_MODEL_NAME,
+              promptVersion: DEEP_PROMPT_VERSION,
+              inputHash: hash,
+              evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+              startedAt: attemptStartedAt,
+            }));
             return;
           }
 
@@ -120,6 +253,7 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             feasibility: out.data.feasibility,
             effort_estimate: out.data.effort_estimate,
             ecosystem_gap: out.data.ecosystem_gap,
+            harmony_leverage: out.data.harmony_leverage,
             adaptation_points: out.data.adaptation_points,
             recommended_approach: out.data.recommended_approach,
             reasoning: out.data.reasoning,
@@ -129,18 +263,53 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             tokens_out: out.tokens_out,
             analyzed_at: new Date().toISOString(),
           });
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 3,
+            status: 'success',
+            model: out.model,
+            promptVersion: out.prompt_version,
+            inputHash: out.input_hash,
+            trace: out.trace,
+            evidence: buildEvidenceSnapshot(sig, facts, repo.readme_text),
+            output: out.data,
+            tokensIn: out.tokens_in,
+            tokensOut: out.tokens_out,
+          }));
           analyzed++;
-          log(`  已深挖 ${analyzed}/${candidates.length}:${repo.full_name}`);
+          log(`  已深挖 ${analyzed}/${limit}:${repo.full_name}`);
         } catch (err) {
           failed++;
+          executionRows.push(captureAnalysisExecution({
+            pipelineRunId: runId,
+            repositoryId: repo.id,
+            repositoryName: repo.full_name,
+            tier: 3,
+            status: 'failed',
+            model: EVALUATE_MODEL_NAME,
+            promptVersion: DEEP_PROMPT_VERSION,
+            evidence: buildEvidenceSnapshot(sig, undefined, repo.readme_text),
+            error: String(err),
+            startedAt: attemptStartedAt,
+          }));
           log(`  深挖失败 ${repo.full_name}: ${String(err).slice(0, 120)}`);
         }
-      },
-      // DeepWiki 深度档本身已并发 7 问,外层压到 2 避免叠乘
-      2,
-    );
+    };
+
+    // 每批最多 2 个；接近目标时按剩余名额缩小批次，避免并发越过 quota。
+    let candidateOffset = 0;
+    while (candidateOffset < candidates.length && analyzed < limit) {
+      const batchSize = Math.min(2, limit - analyzed);
+      const batch = candidates.slice(candidateOffset, candidateOffset + batchSize);
+      candidateOffset += batch.length;
+      await pMap(batch, analyzeCandidate, batch.length);
+    }
 
     await upsertBatched('analysis', rows, { onConflict: 'repository_id,tier,prompt_version,model' });
+    await upsertBatched('deepwiki_analysis', deepwikiRows, { onConflict: 'repository_id' });
+    await flushAnalysisExecutionLogs(executionRows);
 
     if (notIndexed.length) {
       log(
@@ -155,9 +324,13 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
       failed,
       newCategories,
       not_indexed: notIndexed,
+      insufficient_evidence: insufficientEvidence,
+      target: limit,
+      quota_filled: analyzed >= limit,
     });
     log(
-      `deepwiki-deep 完成:深挖 ${analyzed}、跳过 ${skipped}、失败 ${failed}、未索引 ${notIndexed.length}、新建分类 ${newCategories}`,
+      `deepwiki-deep 完成:深挖 ${analyzed}/${limit}、跳过 ${skipped}、失败 ${failed}、` +
+        `未索引 ${notIndexed.length}、证据不足 ${insufficientEvidence.length}、新建分类 ${newCategories}`,
     );
   } catch (err) {
     await finishRun(runId, 'failed', { error: String(err) });

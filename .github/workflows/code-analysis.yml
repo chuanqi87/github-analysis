@@ -39,6 +39,8 @@ jobs:
   deepwiki-deep:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    outputs:
+      registered_repos: ${{ steps.register.outputs.registered_repos }}
     env:
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
@@ -57,8 +59,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Register explicitly requested repositories
+        if: ${{ github.event.inputs.repos != '' }}
+        id: register
+        env:
+          REQUESTED_REPOS: ${{ github.event.inputs.repos }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: pnpm exec tsx scripts/register-repositories.ts "$REQUESTED_REPOS"
+
       - name: Run DeepWiki deep analysis
-        run: pnpm pipeline --stage=deepwiki-deep --limit=${{ github.event.inputs.limit || '30' }}
+        env:
+          REQUESTED_REPOS: ${{ github.event.inputs.repos }}
+          REQUESTED_REPO_IDS: ${{ steps.register.outputs.repo_ids }}
+        run: |
+          if [ -n "$REQUESTED_REPOS" ]; then
+            pnpm pipeline --stage=deepwiki-deep --ids="$REQUESTED_REPO_IDS" --force
+          else
+            pnpm pipeline --stage=deepwiki-deep --limit=${{ github.event.inputs.limit || '30' }}
+          fi
 
       - name: Summary
         if: always()
@@ -93,12 +111,14 @@ jobs:
         run: pip install -r scripts/agent/requirements.txt
 
       - name: Run tarball agent on DeepWiki-uncovered repos
+        env:
+          REQUESTED_REPOS: ${{ needs.deepwiki-deep.outputs.registered_repos || github.event.inputs.repos }}
         run: |
-          if [ -n "${{ github.event.inputs.repos }}" ]; then
+          if [ -n "$REQUESTED_REPOS" ]; then
             # 手动指定仓库：不加 --not-indexed-only，按用户要求原样分析
-            REPOS=$(echo "${{ github.event.inputs.repos }}" | tr ',' ' ')
-            echo "🔍 分析指定仓库: $REPOS"
-            python scripts/agent/run.py $REPOS -v --write-db -o analysis-results.json
+            IFS=',' read -ra REPOS <<< "$REQUESTED_REPOS"
+            echo "🔍 分析指定仓库: $REQUESTED_REPOS"
+            python scripts/agent/run.py "${REPOS[@]}" -v --write-db -o analysis-results.json
           else
             echo "🔍 兜底：只分析 DeepWiki 未索引的仓库"
             python scripts/agent/run.py --from-db --not-indexed-only \
