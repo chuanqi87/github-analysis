@@ -1,4 +1,5 @@
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
+import { sanitizePostgresJson } from '@/lib/supabase/json-safety';
 import { getPipelineSessionId, writeSessionEvent } from '@/lib/pipeline/session';
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
@@ -112,7 +113,8 @@ export function captureAnalysisExecution(input: AnalysisExecutionInput): Analysi
 }
 
 export async function flushAnalysisExecutionLogs(rows: AnalysisExecutionRow[]): Promise<void> {
-  await upsertBatched('analysis_execution_logs', rows, { chunkSize: 100 });
+  const safeRows = rows.map((row) => sanitizePostgresJson(row));
+  await upsertBatched('analysis_execution_logs', safeRows, { chunkSize: 100 });
 }
 
 export async function countSessionExecutions(sessionId = getPipelineSessionId()): Promise<number> {

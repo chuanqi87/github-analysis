@@ -20,6 +20,21 @@ export const PROMPT_VERSION = 'p9';
 export const README_CHARS_TIER1 = 2000;
 export const README_CHARS_TIER2 = 6000;
 
+/** 按 UTF-16 长度截断，但不把 emoji 等补充平面字符的代理对切成两半。 */
+function sliceAtCodePointBoundary(value: string, maxChars: number): string {
+  const end = Math.max(0, Math.trunc(maxChars));
+  if (value.length <= end) return value;
+
+  const lastCodeUnit = value.charCodeAt(end - 1);
+  const nextCodeUnit = value.charCodeAt(end);
+  const splitsSurrogatePair =
+    lastCodeUnit >= 0xd800 &&
+    lastCodeUnit <= 0xdbff &&
+    nextCodeUnit >= 0xdc00 &&
+    nextCodeUnit <= 0xdfff;
+  return value.slice(0, splitsSurrogatePair ? end - 1 : end);
+}
+
 /**
  * 清洗并截断 README:去徽章/图片/HTML注释等对判断无用的噪音,再按上限截断。
  * 返回 null 表示无有效内容。
@@ -33,7 +48,9 @@ export function prepareReadme(readme: string | null | undefined, maxChars: numbe
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   if (!cleaned) return null;
-  return cleaned.length > maxChars ? `${cleaned.slice(0, maxChars)}\n…(已截断)` : cleaned;
+  return cleaned.length > maxChars
+    ? `${sliceAtCodePointBoundary(cleaned, maxChars)}\n…(已截断)`
+    : cleaned;
 }
 
 const STATE_RULES = `## A. 适配状态判定(harmony_suggestion)——事实题
