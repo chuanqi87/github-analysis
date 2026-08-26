@@ -22,17 +22,23 @@ test('GitHub 描述本身是中文时直接采用', () => {
   assert.equal(intro.original, undefined);
 });
 
-test('能从评估理由抽出项目是什么', () => {
+test('能从评估理由抽出项目是什么,丢掉取证行话', () => {
   const reasoning =
     '①技术栈与平台耦合点：SQLite 是嵌入式关系型数据库引擎，核心在 C 实现的 VFS 层。②适配现状：未发现鸿蒙移植。③推荐路径：新增 os_ohos.c。';
-  assert.match(extractFromReasoning(reasoning) ?? '', /嵌入式关系型数据库/);
+  assert.equal(extractFromReasoning(reasoning), 'SQLite 是嵌入式关系型数据库引擎。');
   const intro = buildProjectIntro({
     name: 'sqlite',
     description: 'Official Git mirror of the SQLite source tree',
     reasoning,
   });
-  assert.match(intro.summary, /嵌入式关系型数据库/);
+  assert.equal(intro.summary, 'SQLite 是嵌入式关系型数据库引擎。');
   assert.equal(intro.original, 'Official Git mirror of the SQLite source tree');
+});
+
+test('评估理由夹杂 DeepWiki 行话时只留「是什么」', () => {
+  const reasoning =
+    '①技术栈与平台耦合点：Redux 是纯 JS/TS 状态管理库，DeepWiki 明确显示原生代码占比约 0%、无 FFI。②适配现状：ohpm 未命中。';
+  assert.equal(extractFromReasoning(reasoning), 'Redux 是纯 JS/TS 状态管理库。');
 });
 
 test('没有中文材料时用分类兜底,不丢原描述', () => {

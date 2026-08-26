@@ -35,7 +35,7 @@ export function hasCjk(text: string): boolean {
   return CJK_RE.test(text);
 }
 
-/** 从 tier-2/3 评估理由里抽出「项目是什么」那一段,丢掉适配建议。 */
+/** 从 tier-2/3 评估理由里抽出「项目是什么」那一句,丢掉适配建议和取证行话。 */
 export function extractFromReasoning(reasoning: string): string | null {
   const cut = reasoning
     .replace(/^\s*[①1][.、:：]?\s*(技术栈与平台耦合点[:：]?)?/, '')
@@ -44,14 +44,14 @@ export function extractFromReasoning(reasoning: string): string | null {
     .trim();
   if (!hasCjk(cut) || cut.length < 12) return null;
 
-  const sentences = cut.split(/(?<=[。！？;；])\s*/).filter(Boolean);
-  let out = '';
-  for (const s of sentences) {
-    if (out.length >= 40 && out.length + s.length > 180) break;
-    out += s;
-    if (out.length >= 180) break;
-  }
-  return out || null;
+  const jargonAt = cut.search(/[，,。].*(?:DeepWiki|ohpm|GitCode|鸿蒙|适配|原生代码|bridge|FFI|PENDING_)/);
+  const head = (jargonAt > 8 ? cut.slice(0, jargonAt) : cut).replace(/[，,、；;]+$/u, '').trim();
+  if (head.length < 8 || /DeepWiki|ohpm|GitCode|PENDING_/.test(head)) return null;
+
+  const isWhat = head.match(/^.{2,48}是.{2,40}(库|框架|工具|应用|引擎|项目|组件|平台|服务|协议)/);
+  const picked = isWhat ? isWhat[0] : head.split(/[。！？]/)[0] ?? head;
+  if (picked.length < 8) return null;
+  return /[。！？]$/.test(picked) ? picked : `${picked}。`;
 }
 
 function typeWord(projectType: string | null | undefined): string {
