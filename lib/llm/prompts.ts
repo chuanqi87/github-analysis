@@ -8,6 +8,8 @@
 // p8: 注入经本地 HarmonyOS 官方文档核验的 Kit 能力边界，抑制 Kit 名称误用。
 // p9: 把“通用可用性”与“鸿蒙专属增量”拆开；修正生态缺口饱和、通用库高估，
 //     并把 Kit 输出约束到官方名称或“需验证:<能力>”。
+// project_summary_cn: 新增中文简介字段,不 bump 版本,以免触发全量 LLM 重跑;
+//     新分析或 --force 会产出该字段,前端对旧数据用分类/评估理由兜底。
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
@@ -194,9 +196,10 @@ export function systemPrompt(
   opts: SystemPromptOpts = {},
 ): string {
   const parts = [
-    `你是鸿蒙(HarmonyOS NEXT / OpenHarmony)生态适配分析专家。你要对一个 GitHub 开源项目完成两类判断:
+    `你是鸿蒙(HarmonyOS NEXT / OpenHarmony)生态适配分析专家。你要对一个 GitHub 开源项目完成三类判断:
 A. **适配状态判定**——事实题,只依据给定信号与 README 证据,不做推测
 B. **适配价值评估**——分析题,必须落到该项目的具体技术特征,拒绝对任何项目都成立的泛泛结论
+C. **项目中文简介**(project_summary_cn)——用 1-2 句中文说明这个项目是干什么的,面向不熟悉该仓库的读者。只依据 README/描述/代码事实,禁止编造功能,不要写鸿蒙适配建议
 
 所有事实引用必须能在给定材料中找到出处;材料没有的信息就明说不知道,不要臆造。`,
     STATE_RULES,

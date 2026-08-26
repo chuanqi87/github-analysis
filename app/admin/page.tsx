@@ -32,6 +32,7 @@ import PipelineCard from '@/components/admin/PipelineCard';
 import LoginCard from '@/components/admin/LoginCard';
 import DailyProgressCard from '@/components/admin/DailyProgressCard';
 import MobileAdminList from '@/components/admin/MobileAdminList';
+import ProjectIntro from '@/components/ProjectIntro';
 import { buildAdminFilters, type AnalysisFilter } from '@/components/admin/filters';
 
 export default function AdminPage() {
@@ -115,9 +116,7 @@ export default function AdminPage() {
             </Link>
             <ArchivedTag archived={r.is_archived} reason={r.archived_reason} />
           </Space>
-          <Typography.Text type="secondary" ellipsis style={{ maxWidth: 380 }}>
-            {r.description}
-          </Typography.Text>
+          <ProjectIntro row={r} />
         </Space>
       ),
     },

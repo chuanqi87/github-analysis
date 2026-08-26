@@ -205,6 +205,8 @@ export interface AnalysisRow {
   adaptation_points: AdaptationPoint[] | null;
   recommended_approach: string | null;
   reasoning: string | null;
+  /** 1-2 句中文:这个项目是干什么的 */
+  project_summary_cn: string | null;
   confidence: number | null;
   tokens_in: number | null;
   tokens_out: number | null;

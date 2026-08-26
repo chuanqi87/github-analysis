@@ -16,14 +16,11 @@ a {
   color: inherit;
 }
 
-/* 移动端:压缩 antd 默认的表格/卡片外边距 */
-@media (max-width: 768px) {
-  .ant-card {
-    margin-bottom: 12px !important;
-  }
-  .ant-pro-table .ant-table-wrapper {
-    overflow-x: auto;
-  }
+.page-body {
+  padding: 16px;
+  min-height: calc(100vh - 120px);
+  width: 100%;
+  max-width: 100%;
 }
 
 .score-bar {
@@ -57,8 +54,163 @@ a {
   text-align: right;
 }
 
-@media (max-width: 768px) {
+.project-intro--full {
+  padding: 12px 14px;
+  background: #f5f9ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+}
+
+.repo-list-item {
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+  width: 100%;
+}
+
+.compact-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.compact-filters .ant-input-search,
+.compact-filters .ant-select,
+.compact-filters .ant-segmented {
+  width: 100%;
+}
+
+/* 紧凑端:铺满视口,去掉 ProLayout / Card 两侧留白 */
+@media (max-width: 991px) {
+  .page-body {
+    padding: 0;
+    min-height: calc(100vh - 56px);
+  }
+
+  .ant-pro-layout .ant-layout.ant-layout-has-sider {
+    flex-direction: column !important;
+  }
+
+  .ant-pro-layout .ant-layout-has-sider > .ant-layout,
+  .ant-pro-layout .ant-layout-has-sider > .ant-layout-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    flex: 1 1 auto !important;
+  }
+
+  .ant-pro-layout .ant-layout-sider,
+  .ant-pro-layout .ant-pro-sider {
+    position: fixed !important;
+    z-index: 100;
+  }
+
+  .ant-pro-layout .ant-layout-sider-collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0 !important;
+    overflow: hidden !important;
+  }
+
+  .ant-pro-layout .ant-pro-layout-content,
+  .ant-pro-layout .ant-layout-content,
+  .ant-pro-layout .ant-pro-layout-container,
+  .ant-pro-grid-content,
+  .ant-pro-grid-content-wide,
+  .ant-pro-page-container,
+  .ant-pro-page-container-children-container,
+  .ant-pro-page-container-children-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+
+  .page-body--compact > .ant-spin-nested-loading,
+  .page-body--compact > .ant-spin-nested-loading > .ant-spin-container {
+    width: 100%;
+  }
+
+  .page-body--compact .ant-card {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    margin-bottom: 0 !important;
+  }
+
+  .page-body--compact .ant-card + .ant-card,
+  .page-body--compact .ant-row + .ant-card,
+  .page-body--compact .ant-card + .ant-row {
+    margin-top: 8px;
+  }
+
+  .page-body--compact .ant-card-head {
+    padding: 0 12px;
+    min-height: 44px;
+  }
+
+  .page-body--compact .ant-card-head-title {
+    padding: 10px 0;
+    white-space: normal;
+  }
+
+  .page-body--compact .ant-card-body {
+    padding: 12px;
+  }
+
+  .page-body--compact .ant-card-extra {
+    padding: 10px 0;
+  }
+
+  .page-body--compact .ant-list-item {
+    padding-inline: 0;
+  }
+
+  .page-body--compact .ant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .page-body--compact .ant-pro-table .ant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .page-body--compact .ant-space-item {
+    max-width: 100%;
+  }
+
   .score-bar {
     min-width: 80px;
+  }
+
+  .trending-page {
+    background: #fff;
+  }
+
+  .trending-page__header {
+    padding: 12px;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .trending-page__filters {
+    padding: 10px 12px 4px;
+  }
+
+  .trending-page__list {
+    padding: 0 12px;
+  }
+
+  .trending-page__item {
+    padding: 14px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .trending-page__item:last-child {
+    border-bottom: none;
+  }
+
+  .board-mobile,
+  .admin-mobile {
+    padding: 12px;
+    background: #fff;
   }
 }

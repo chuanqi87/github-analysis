@@ -8,12 +8,13 @@ import HarmonyBadge from '@/components/HarmonyBadge';
 import ArchivedTag from '@/components/ArchivedTag';
 import SignalTags from './SignalTags';
 import { buildAdminFilters, type AnalysisFilter } from './filters';
+import ProjectIntro from '@/components/ProjectIntro';
 
 function AdminCard({ row, onMark }: { row: BoardRow; onMark: (r: BoardRow) => void }) {
   const categoryName = row.category_name || row.category;
   return (
     <List.Item style={{ padding: 0, borderBottom: '1px solid #f0f0f0' }}>
-      <div style={{ padding: '10px 4px', width: '100%' }}>
+      <div className="repo-list-item">
         <Space align="center" size={4} wrap>
           <Link href={{ pathname: '/repo', query: { full: row.full_name } }}>
             <Typography.Text
@@ -25,14 +26,7 @@ function AdminCard({ row, onMark }: { row: BoardRow; onMark: (r: BoardRow) => vo
           </Link>
           <ArchivedTag archived={row.is_archived} reason={row.archived_reason} />
         </Space>
-        {row.description && (
-          <Typography.Text
-            type="secondary"
-            style={{ display: 'block', fontSize: 12, marginTop: 2, lineHeight: 1.4 }}
-          >
-            {row.description}
-          </Typography.Text>
-        )}
+        <ProjectIntro row={row} />
         <Space size={4} wrap style={{ marginTop: 6 }}>
           {row.is_archived ? (
             <Tag color="default">📦 归档</Tag>
@@ -102,7 +96,8 @@ export default function MobileAdminList({
 
   return (
     <Spin spinning={loading}>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <div className="admin-mobile">
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Input.Search
           placeholder="搜索项目名"
           allowClear
@@ -140,7 +135,8 @@ export default function MobileAdminList({
           showSizeChanger={false}
           style={{ textAlign: 'center' }}
         />
-      </Space>
+        </Space>
+      </div>
     </Spin>
   );
 }

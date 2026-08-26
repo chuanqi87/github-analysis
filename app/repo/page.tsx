@@ -34,6 +34,8 @@ import NotConfigured from '@/components/NotConfigured';
 import Tier3Analysis from '@/components/Tier3Analysis';
 import DeepwikiFacts from '@/components/DeepwikiFacts';
 import EvidenceBadge from '@/components/EvidenceBadge';
+import ProjectIntro from '@/components/ProjectIntro';
+import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 
 const DIFF_COLOR: Record<string, string> = { low: 'green', medium: 'gold', high: 'red' };
 
@@ -52,6 +54,7 @@ function BreakdownItem({ label, value }: { label: string; value: number | null |
 function RepoDetail() {
   const params = useSearchParams();
   const full = params.get('full');
+  const isMobile = useIsMobile();
   const [row, setRow] = useState<BoardRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
@@ -117,11 +120,11 @@ function RepoDetail() {
         />
       )}
 
-      <Card>
-        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+      <Card size={isMobile ? 'small' : 'default'} styles={isMobile ? { body: { padding: 12 } } : undefined}>
+        <Space direction="vertical" size={8} style={{ width: '100%' }}>
           <Flex align="center" wrap="wrap" gap={8} justify="space-between" style={{ width: '100%' }}>
             <Space align="center" wrap>
-              <Typography.Title level={3} style={{ margin: 0 }}>
+              <Typography.Title level={isMobile ? 4 : 3} style={{ margin: 0, wordBreak: 'break-all' }}>
                 <a href={`https://github.com/${row.full_name}`} target="_blank" rel="noreferrer">
                   {row.full_name}
                 </a>
@@ -134,6 +137,7 @@ function RepoDetail() {
                 </Tooltip>
               )}
               {row.category && <Tag color="blue">{row.category_name || row.category}</Tag>}
+              {row.subcategory_name && <Tag>{row.subcategory_name}</Tag>}
             </Space>
             {GH_TRIGGER_TOKEN && !row.is_archived && (
               <Popconfirm
@@ -165,7 +169,7 @@ function RepoDetail() {
               </Popconfirm>
             )}
           </Flex>
-          <Typography.Text type="secondary">{row.description}</Typography.Text>
+          <ProjectIntro row={row} size="full" />
           <Space wrap>
             <Tag>★ {row.stars.toLocaleString()}</Tag>
             {row.primary_language && <Tag>{row.primary_language}</Tag>}
@@ -184,7 +188,7 @@ function RepoDetail() {
 
       <DeepwikiFacts row={row} />
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[8, 8]}>
         <Col xs={24} md={12}>
           <Card title="鸿蒙化信号(辅助人工审核)" size="small">
             <Space size={6} wrap>
@@ -246,7 +250,7 @@ function RepoDetail() {
                 {row.recommended_approach ?? '-'}
               </Descriptions.Item>
               <Descriptions.Item label="分析层级">
-                {row.analysis_tier === 2 ? '深度评估' : '粗分类'}
+                {row.analysis_tier === 3 ? '代码深析' : row.analysis_tier === 2 ? '深度评估' : '粗分类'}
               </Descriptions.Item>
               <Descriptions.Item label="移动相关度">{pct(row.mobile_relevance)}%</Descriptions.Item>
               <Descriptions.Item label="可行性">{pct(row.feasibility)}%</Descriptions.Item>

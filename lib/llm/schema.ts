@@ -33,6 +33,11 @@ export const classifySchema = z.object({
     .nullable()
     .default(null)
     .describe('当 propose_new_category=true 时,填写新分类详情'),
+  project_summary_cn: z
+    .string()
+    .describe(
+      '用 1-2 句中文说明这个项目是干什么的,面向不熟悉该仓库的读者。只依据 README/描述/代码事实,禁止编造功能,不要写鸿蒙适配建议',
+    ),
   // 鸿蒙化评估
   harmony_suggestion: harmonyEnum.describe(
     '适配状态:严格按系统提示的优先级判定表,只依据给定事实信号,不得输出 NOT_ADAPTED',
@@ -62,6 +67,11 @@ export const evaluateSchema = z.object({
   subcategory: z.string().describe('子分类 slug'),
   propose_new_category: z.boolean().default(false),
   new_category: newCategoryProposalSchema.nullable().default(null),
+  project_summary_cn: z
+    .string()
+    .describe(
+      '用 1-2 句中文说明这个项目是干什么的,面向不熟悉该仓库的读者。只依据 README/描述/代码事实,禁止编造功能,不要写鸿蒙适配建议',
+    ),
   harmony_suggestion: harmonyEnum.describe(
     '适配状态:严格按系统提示的优先级判定表,只依据给定事实信号,不得输出 NOT_ADAPTED',
   ),

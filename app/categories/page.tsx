@@ -4,9 +4,11 @@ import { Card, Table, Progress, Spin, Tag } from 'antd';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { fetchCategoryStats, type CategoryStat } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import NotConfigured from '@/components/NotConfigured';
 
 export default function CategoriesPage() {
+  const isMobile = useIsMobile();
   const [rows, setRows] = useState<CategoryStat[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,12 +34,25 @@ export default function CategoriesPage() {
   return (
     <Spin spinning={loading}>
       <Card title="各分类项目数量与平均适配优先级" style={{ marginBottom: 16 }}>
-        <div style={{ width: '100%', height: 360 }}>
+        <div style={{ width: '100%', height: isMobile ? Math.max(280, chartData.length * 28) : 360 }}>
           <ResponsiveContainer>
-            <BarChart data={chartData} margin={{ left: 8, right: 8, bottom: 40 }}>
+            <BarChart
+              data={chartData}
+              layout={isMobile ? 'vertical' : 'horizontal'}
+              margin={isMobile ? { left: 8, right: 16, top: 8, bottom: 8 } : { left: 8, right: 8, bottom: 40 }}
+            >
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={60} />
-              <YAxis />
+              {isMobile ? (
+                <>
+                  <XAxis type="number" />
+                  <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 11 }} />
+                </>
+              ) : (
+                <>
+                  <XAxis dataKey="name" angle={-30} textAnchor="end" interval={0} height={60} />
+                  <YAxis />
+                </>
+              )}
               <Tooltip />
               <Bar dataKey="数量" fill="#1677ff" />
             </BarChart>
@@ -50,7 +65,8 @@ export default function CategoriesPage() {
           rowKey="category"
           dataSource={rows}
           pagination={false}
-          scroll={{ x: 600 }}
+          scroll={{ x: isMobile ? 520 : 600 }}
+          size={isMobile ? 'small' : 'middle'}
           columns={[
             {
               title: '分类',
@@ -59,7 +75,7 @@ export default function CategoriesPage() {
                 <Tag color="blue">{name || r.category}</Tag>
               ),
             },
-            { title: 'Slug', dataIndex: 'category', render: (v) => <code>{v}</code> },
+            { title: 'Slug', dataIndex: 'category', render: (v) => <code>{v}</code>, hidden: isMobile },
             { title: '项目数', dataIndex: 'total', sorter: (a, b) => a.total - b.total },
             {
               title: '平均优先级',
@@ -73,7 +89,7 @@ export default function CategoriesPage() {
               title: '鸿蒙化率',
               render: (_, r) => {
                 const rate = r.total ? Math.round((r.adapted / r.total) * 100) : 0;
-                return <Progress percent={rate} size="small" style={{ maxWidth: 160 }} />;
+                return <Progress percent={rate} size="small" style={{ maxWidth: isMobile ? 100 : 160 }} />;
               },
             },
           ]}
