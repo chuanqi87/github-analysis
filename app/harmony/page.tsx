@@ -5,6 +5,7 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import { HARMONY_STATE_LABELS, type HarmonyState } from '@/lib/types';
 import { fetchHarmonyStats, type HarmonyStat } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import NotConfigured from '@/components/NotConfigured';
 
 const COLORS: Record<HarmonyState, string> = {
@@ -16,6 +17,7 @@ const COLORS: Record<HarmonyState, string> = {
 };
 
 export default function HarmonyPage() {
+  const isMobile = useIsMobile();
   const [rows, setRows] = useState<HarmonyStat[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -43,7 +45,7 @@ export default function HarmonyPage() {
 
   return (
     <Spin spinning={loading}>
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+      <Row gutter={[8, 8]} style={{ marginBottom: 16 }}>
         <Col xs={12} md={6}>
           <Card>
             <Statistic title="项目总数" value={total} />
@@ -70,13 +72,19 @@ export default function HarmonyPage() {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[8, 8]}>
         <Col xs={24} md={12}>
           <Card title="鸿蒙化状态分布">
-            <div style={{ width: '100%', height: 320 }}>
+            <div style={{ width: '100%', height: isMobile ? 260 : 320 }}>
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={110} label>
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    outerRadius={isMobile ? 72 : 110}
+                    label={!isMobile}
+                  >
                     {pieData.map((d) => (
                       <Cell key={d.state} fill={COLORS[d.state as HarmonyState] ?? '#bfbfbf'} />
                     ))}
@@ -94,6 +102,7 @@ export default function HarmonyPage() {
               rowKey="effective_state"
               dataSource={rows}
               pagination={false}
+              size={isMobile ? 'small' : 'middle'}
               columns={[
                 {
                   title: '状态',

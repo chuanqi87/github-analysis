@@ -3,6 +3,7 @@ import { Alert, Card, Collapse, Descriptions, Empty, Space, Tag, Tooltip, Typogr
 import { ApiOutlined, BranchesOutlined, LinkOutlined, PartitionOutlined } from '@ant-design/icons';
 import type { BoardRow } from '@/lib/queries';
 import { HARMONY_SCOPE_LABELS } from '@/lib/types';
+import { PROJECT_TYPE_LABELS } from '@/lib/project-intro';
 import { DEEPWIKI_BASE } from '@/lib/config';
 
 const { Text, Paragraph } = Typography;
@@ -106,7 +107,9 @@ export default function DeepwikiFacts({ row }: { row: BoardRow }) {
         )}
 
         {row.deepwiki_project_type && (
-          <Descriptions.Item label="项目形态">{row.deepwiki_project_type}</Descriptions.Item>
+          <Descriptions.Item label="项目形态">
+            {PROJECT_TYPE_LABELS[row.deepwiki_project_type] ?? row.deepwiki_project_type}
+          </Descriptions.Item>
         )}
 
         {(row.deepwiki_languages?.length ?? 0) > 0 && (

@@ -31,17 +31,27 @@ export default function AppShell({ children }: { children: ReactNode }) {
         title={isMobile ? '鸿蒙适配' : '鸿蒙适配分析看板'}
         logo={false}
         layout="mix"
+        splitMenus={false}
+        contentWidth="Fluid"
         fixedHeader
         fixSiderbar={!isMobile}
+        collapsed={isMobile || undefined}
+        menu={{ hideMenuWhenCollapsed: isMobile }}
+        breakpoint={false}
         location={{ pathname }}
         route={{ routes: ROUTES }}
         menuItemRender={(item, dom) => <Link href={item.path ?? '/'}>{dom}</Link>}
-        token={{ header: { colorBgMenuItemSelected: 'rgba(22,119,255,0.1)' } }}
+        contentStyle={{ padding: 0 }}
+        token={{
+          header: { colorBgMenuItemSelected: 'rgba(22,119,255,0.1)' },
+          pageContainer: {
+            paddingBlockPageContainerContent: 0,
+            paddingInlinePageContainerContent: 0,
+          },
+        }}
         avatarProps={undefined}
       >
-        <div style={{ padding: isMobile ? 8 : 16, minHeight: 'calc(100vh - 120px)' }}>
-          {children}
-        </div>
+        <div className={isMobile ? 'page-body page-body--compact' : 'page-body'}>{children}</div>
       </ProLayout>
     </ConfigProvider>
   );

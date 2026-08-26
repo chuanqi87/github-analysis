@@ -186,6 +186,7 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             adaptation_points: out.data.adaptation_points,
             recommended_approach: out.data.recommended_approach,
             reasoning: out.data.reasoning,
+            project_summary_cn: out.data.project_summary_cn,
             harmony_adapted_repo_url: out.data.harmony_adapted_repo_url,
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,

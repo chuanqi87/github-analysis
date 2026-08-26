@@ -118,6 +118,7 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
             // 旧列:兼容过渡(写入枚举值,从 slug 反推大写)
             category: resolved.category_enum,
             subcategory: out.data.subcategory || '',
+            project_summary_cn: out.data.project_summary_cn,
             harmony_suggestion: out.data.harmony_suggestion,
             mobile_relevance: out.data.mobile_relevance,
             feasibility: out.data.feasibility,

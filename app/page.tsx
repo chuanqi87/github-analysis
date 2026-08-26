@@ -26,6 +26,7 @@ import EvidenceBadge from '@/components/EvidenceBadge';
 import ArchivedTag from '@/components/ArchivedTag';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
+import ProjectIntro from '@/components/ProjectIntro';
 
 // ─── 移动端卡片 ────────────────────────────────────────────────────────────
 
@@ -38,7 +39,7 @@ function BoardCard({
 }) {
   return (
     <List.Item style={{ padding: 0, borderBottom: '1px solid #f0f0f0' }}>
-      <div style={{ padding: '10px 4px', width: '100%' }}>
+      <div className="repo-list-item">
         <Flex align="center" gap={6} wrap>
           {row.rank != null && (
             <Typography.Text strong style={{ color: row.rank <= 3 ? '#fa8c16' : undefined }}>
@@ -55,14 +56,7 @@ function BoardCard({
           </Link>
           <ArchivedTag archived={row.is_archived} reason={row.archived_reason} />
         </Flex>
-        {row.description && (
-          <Typography.Text
-            type="secondary"
-            style={{ display: 'block', fontSize: 12, marginTop: 2, lineHeight: 1.4 }}
-          >
-            {row.description}
-          </Typography.Text>
-        )}
+        <ProjectIntro row={row} />
         <Flex align="center" gap={4} wrap style={{ marginTop: 6 }}>
           {row.primary_language && <Tag>{row.primary_language}</Tag>}
           {(() => {
@@ -123,7 +117,8 @@ function MobileBoard({
 
   return (
     <Spin spinning={loading}>
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <div className="board-mobile">
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Input.Search
           placeholder="搜索项目名"
           allowClear
@@ -202,7 +197,8 @@ function MobileBoard({
           showSizeChanger={false}
           style={{ textAlign: 'center' }}
         />
-      </Space>
+        </Space>
+      </div>
     </Spin>
   );
 }
@@ -248,9 +244,7 @@ function DesktopBoard({
               {r.full_name}
             </Typography.Text>
           </Link>
-          <Typography.Text type="secondary" ellipsis style={{ maxWidth: 420 }}>
-            {r.description}
-          </Typography.Text>
+          <ProjectIntro row={r} />
         </Space>
       ),
     },

@@ -41,6 +41,7 @@ export interface BoardRow {
   adaptation_points: AdaptationPoint[] | null;
   recommended_approach: string | null;
   reasoning: string | null;
+  project_summary_cn: string | null;
   auto_state_hint: HarmonyState | null;
   ohpm_matched: boolean | null;
   ohpm_packages: { pkg: string; repository: string | null }[] | null;
@@ -204,6 +205,9 @@ export interface TrendingRow {
   analysis_tier: number | null;
   effective_state: HarmonyState | null;
   category_name: string | null;
+  subcategory_name: string | null;
+  project_summary_cn: string | null;
+  reasoning: string | null;
   priority_score: number | null;
   weeks_on_trending: number;
 }
@@ -233,14 +237,29 @@ export async function fetchTrending(date: string): Promise<TrendingRow[]> {
   // 关联 repo_board 获取分析状态(仅对有 repository_id 的行)
   const repoIds = rows.filter((r) => r.repository_id != null).map((r) => r.repository_id!);
   if (repoIds.length > 0) {
-    const { data: boardData } = await sb
+    const { data: boardData, error: boardError } = await sb
       .from('repo_board')
-      .select('id, analysis_tier, effective_state, category_name, priority_score')
+      .select('id, analysis_tier, effective_state, category_name, subcategory_name, reasoning, priority_score, project_summary_cn')
       .in('id', repoIds);
+    const boardRows = boardError
+      ? (
+          await sb
+            .from('repo_board')
+            .select('id, analysis_tier, effective_state, category_name, subcategory_name, reasoning, priority_score')
+            .in('id', repoIds)
+        ).data
+      : boardData;
     const boardMap = new Map(
-      ((boardData ?? []) as { id: number; analysis_tier: number | null; effective_state: HarmonyState | null; category_name: string | null; priority_score: number | null }[]).map(
-        (r) => [r.id, r],
-      ),
+      ((boardRows ?? []) as {
+        id: number;
+        analysis_tier: number | null;
+        effective_state: HarmonyState | null;
+        category_name: string | null;
+        subcategory_name: string | null;
+        project_summary_cn?: string | null;
+        reasoning: string | null;
+        priority_score: number | null;
+      }[]).map((r) => [r.id, r]),
     );
     for (const row of rows) {
       if (row.repository_id != null) {
@@ -248,6 +267,9 @@ export async function fetchTrending(date: string): Promise<TrendingRow[]> {
         row.analysis_tier = board?.analysis_tier ?? null;
         row.effective_state = board?.effective_state ?? null;
         row.category_name = board?.category_name ?? null;
+        row.subcategory_name = board?.subcategory_name ?? null;
+        row.project_summary_cn = board?.project_summary_cn ?? null;
+        row.reasoning = board?.reasoning ?? null;
         row.priority_score = board?.priority_score ?? null;
       }
     }
