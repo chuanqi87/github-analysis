@@ -80,11 +80,16 @@ a {
   width: 100%;
 }
 
+.mobile-tabbar {
+  display: none;
+}
+
 /* 紧凑端:铺满视口,去掉 ProLayout / Card 两侧留白 */
 @media (max-width: 991px) {
   .page-body {
     padding: 0;
     min-height: calc(100vh - 56px);
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
   }
 
   .ant-pro-layout .ant-layout.ant-layout-has-sider {
@@ -218,5 +223,50 @@ a {
   .admin-mobile {
     padding: 12px;
     background: #fff;
+  }
+
+  .mobile-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 300;
+    background: #fff;
+    border-top: 1px solid #f0f0f0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.04);
+  }
+
+  .mobile-tabbar__item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 2px 6px;
+    color: rgba(0, 0, 0, 0.55);
+    text-decoration: none;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .mobile-tabbar__item.is-active {
+    color: #1677ff;
+    font-weight: 600;
+  }
+
+  .mobile-tabbar__icon {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .mobile-tabbar__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 }
