@@ -123,6 +123,13 @@ a {
     padding-inline: 8px !important;
   }
 
+  .ant-pro-global-header-collapsed-button,
+  .ant-pro-sider-collapsed-button,
+  .ant-pro-layout .ant-pro-global-header .anticon-menu-fold,
+  .ant-pro-layout .ant-pro-global-header .anticon-menu-unfold {
+    display: none !important;
+  }
+
   .ant-pro-layout .ant-pro-layout-content,
   .ant-pro-layout .ant-layout-content,
   .ant-pro-layout .ant-pro-layout-container,
