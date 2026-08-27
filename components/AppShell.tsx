@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
+import MobileTabBar from '@/components/MobileTabBar';
 
 const ROUTES = [
   { path: '/', name: '优先级总榜', icon: <DashboardOutlined /> },
@@ -35,9 +36,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         contentWidth="Fluid"
         fixedHeader
         fixSiderbar={!isMobile}
-        collapsed={isMobile || undefined}
-        menu={{ hideMenuWhenCollapsed: isMobile }}
-        breakpoint={false}
+        menuRender={isMobile ? false : undefined}
+        collapsedButtonRender={isMobile ? false : undefined}
         location={{ pathname }}
         route={{ routes: ROUTES }}
         menuItemRender={(item, dom) => <Link href={item.path ?? '/'}>{dom}</Link>}
@@ -52,6 +52,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         avatarProps={undefined}
       >
         <div className={isMobile ? 'page-body page-body--compact' : 'page-body'}>{children}</div>
+        {isMobile ? <MobileTabBar /> : null}
       </ProLayout>
     </ConfigProvider>
   );
