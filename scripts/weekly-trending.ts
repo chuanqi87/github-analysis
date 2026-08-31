@@ -5,6 +5,7 @@ import { fetchGithubTrending, type TrendingSince } from '@/lib/sources/githubTre
 import { batchEnrich, type EnrichResult } from '@/lib/github/graphql';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
+import { canonicalizeTrendingCandidates } from '@/lib/trending/canonicalize';
 import { log, today, type StageOpts } from '@/scripts/_common';
 
 const SNAPSHOT_LIMIT = 100;
@@ -201,7 +202,14 @@ export async function runWeeklyTrending(_opts: StageOpts = {}): Promise<void> {
       const [owner, name] = full_name.split('/');
       return { owner, name, full_name };
     }));
-    const valid = enriched.filter((repo) => repo.found && repo.id != null && repo.owner && repo.name);
+    const canonicalized = canonicalizeTrendingCandidates(names, enriched, seeds);
+    const valid = canonicalized.repos;
+    if (canonicalized.duplicateRepositories > 0 || canonicalized.redirectedAliases > 0) {
+      log(
+        `GitHub 仓库名称归一化：重定向 ${canonicalized.redirectedAliases} 个别名，` +
+        `合并 ${canonicalized.duplicateRepositories} 个重复仓库`,
+      );
+    }
     const archiveStates = new Map<number, { is_archived: boolean; archived_reason: string | null }>();
     for (let i = 0; i < valid.length; i += 300) {
       const { data, error } = await getAdminClient()
@@ -216,8 +224,11 @@ export async function runWeeklyTrending(_opts: StageOpts = {}): Promise<void> {
     await upsertBatched('repositories', valid.map((repo) => repoRow(repo, archiveStates.get(repo.id!))), { onConflict: 'id' });
     await upsertBatched('harmony_signals', valid.map(signalRow), { onConflict: 'repository_id' });
 
-    const [previous, weeks] = await Promise.all([loadPrevious(names), loadTrendingWeeks(names)]);
-    const scored = scoreRepos(seeds, valid, previous);
+    const [previous, weeks] = await Promise.all([
+      loadPrevious(canonicalized.names),
+      loadTrendingWeeks(canonicalized.names),
+    ]);
+    const scored = scoreRepos(canonicalized.seeds, valid, previous);
     const date = today();
     const snapshots = scored.map((row, index) => ({
       captured_date: date,
@@ -250,6 +261,9 @@ export async function runWeeklyTrending(_opts: StageOpts = {}): Promise<void> {
     await finishRun(runId, 'success', {
       raw_seeds: seeds.length,
       unique_candidates: names.length,
+      canonical_candidates: canonicalized.names.length,
+      redirected_aliases: canonicalized.redirectedAliases,
+      duplicate_repositories: canonicalized.duplicateRepositories,
       snapshots: snapshots.length,
       promoted: Math.min(PROMOTION_LIMIT, snapshots.length),
       sources_ok: new Set(seeds.map((seed) => seed.source)).size,
