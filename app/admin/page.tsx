@@ -33,6 +33,8 @@ import LoginCard from '@/components/admin/LoginCard';
 import DailyProgressCard from '@/components/admin/DailyProgressCard';
 import MobileAdminList from '@/components/admin/MobileAdminList';
 import ProjectIntro from '@/components/ProjectIntro';
+import SupportStatusBadge from '@/components/SupportStatusBadge';
+import OpportunityBadge from '@/components/OpportunityBadge';
 import { buildAdminFilters, type AnalysisFilter } from '@/components/admin/filters';
 
 export default function AdminPage() {
@@ -160,11 +162,16 @@ export default function AdminPage() {
       render: (_, r) => <SignalTags r={r} />,
     },
     {
-      title: 'LLM 建议',
-      dataIndex: 'harmony_suggestion',
-      width: 110,
+      title: '自动支持现状',
+      dataIndex: 'support_availability',
+      width: 150,
       hideInSearch: true,
-      render: (_, r) => <HarmonyBadge state={r.harmony_suggestion} />,
+      render: (_, r) => (
+        <Space direction="vertical" size={2}>
+          <SupportStatusBadge availability={r.support_availability} provenance={r.support_provenance} confidence={r.support_confidence} />
+          <OpportunityBadge verdict={r.opportunity_verdict} />
+        </Space>
+      ),
     },
     {
       title: '当前标记',

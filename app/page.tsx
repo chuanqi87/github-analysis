@@ -15,18 +15,23 @@ import {
   Flex,
 } from 'antd';
 import Link from 'next/link';
-import { HARMONY_STATE_LABELS, HARMONY_STATES, type HarmonyState } from '@/lib/types';
+import {
+  SUPPORT_AVAILABILITIES,
+  SUPPORT_AVAILABILITY_LABELS,
+  type SupportAvailability,
+} from '@/lib/types';
 import { fetchBoard, fetchLanguages, type BoardRow } from '@/lib/queries';
 import { loadCategoryTree, getTopCategories } from '@/lib/category/loader';
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import { useBoardData } from '@/lib/hooks/use-board-data';
-import HarmonyBadge from '@/components/HarmonyBadge';
 import EvidenceBadge from '@/components/EvidenceBadge';
 import ArchivedTag from '@/components/ArchivedTag';
 import ScoreBar from '@/components/ScoreBar';
 import NotConfigured from '@/components/NotConfigured';
 import ProjectIntro from '@/components/ProjectIntro';
+import SupportStatusBadge from '@/components/SupportStatusBadge';
+import OpportunityBadge from '@/components/OpportunityBadge';
 
 // ─── 移动端卡片 ────────────────────────────────────────────────────────────
 
@@ -63,7 +68,12 @@ function BoardCard({
             const name = row.category_name || categoryNameMap[row.category ?? ''] || row.category;
             return name ? <Tag color="blue">{name}</Tag> : null;
           })()}
-          <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
+          <SupportStatusBadge
+            availability={row.support_availability}
+            provenance={row.support_provenance}
+            confidence={row.support_confidence}
+          />
+          <OpportunityBadge verdict={row.opportunity_verdict} />
         </Flex>
         <Flex align="center" justify="space-between" style={{ marginTop: 6 }}>
           <Typography.Text style={{ color: '#faad14', fontSize: 13 }}>
@@ -96,7 +106,7 @@ function MobileBoard({
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState('');
   const [category, setCategory] = useState<string | undefined>();
-  const [effectiveState, setEffectiveState] = useState<HarmonyState | undefined>();
+  const [supportAvailability, setSupportAvailability] = useState<SupportAvailability | undefined>();
   const [language, setLanguage] = useState<string | undefined>();
   const pageSize = 20;
 
@@ -108,7 +118,7 @@ function MobileBoard({
     filters: {
       keyword: keyword || undefined,
       category,
-      effectiveState,
+      supportAvailability,
       language,
       excludeAdapted,
       excludeArchived,
@@ -141,15 +151,15 @@ function MobileBoard({
             options={Object.entries(categoryEnum).map(([k, v]) => ({ label: v.text, value: k }))}
           />
           <Select
-            placeholder="鸿蒙状态"
+            placeholder="已支持现状"
             allowClear
             style={{ flex: 1, minWidth: 120 }}
-            value={effectiveState}
+            value={supportAvailability}
             onChange={(v) => {
-              setEffectiveState(v);
+              setSupportAvailability(v);
               setPage(1);
             }}
-            options={HARMONY_STATES.map((s) => ({ label: HARMONY_STATE_LABELS[s], value: s }))}
+            options={SUPPORT_AVAILABILITIES.map((s) => ({ label: SUPPORT_AVAILABILITY_LABELS[s], value: s }))}
           />
           <Select
             placeholder="语言"
@@ -232,6 +242,7 @@ function DesktopBoard({
       dataIndex: 'rank',
       width: 70,
       sorter: true,
+      defaultSortOrder: 'ascend',
       render: (_, r) => r.rank ?? '-',
     },
     {
@@ -270,15 +281,31 @@ function DesktopBoard({
       },
     },
     {
-      title: '鸿蒙状态',
-      dataIndex: 'effective_state',
-      width: 120,
-      filters: HARMONY_STATES.map((s) => ({ text: HARMONY_STATE_LABELS[s], value: s })),
+      title: '已支持现状',
+      dataIndex: 'support_availability',
+      width: 150,
+      filters: SUPPORT_AVAILABILITIES.map((s) => ({ text: SUPPORT_AVAILABILITY_LABELS[s], value: s })),
       filterMultiple: false,
       render: (_, r) => (
         <Space size={4} wrap>
-          <HarmonyBadge state={r.effective_state} reviewed={r.reviewed} />
+          <SupportStatusBadge
+            availability={r.support_availability}
+            provenance={r.support_provenance}
+            confidence={r.support_confidence}
+          />
           <EvidenceBadge level={r.evidence_level} />
+        </Space>
+      ),
+    },
+    {
+      title: '最佳结合机会',
+      dataIndex: 'opportunity_score',
+      width: 150,
+      sorter: true,
+      render: (_, r) => (
+        <Space size={4} wrap>
+          <OpportunityBadge verdict={r.opportunity_verdict} />
+          {r.opportunity_score != null ? <Typography.Text>{r.opportunity_score.toFixed(1)}</Typography.Text> : null}
         </Space>
       ),
     },
@@ -303,13 +330,12 @@ function DesktopBoard({
       dataIndex: 'stars',
       width: 100,
       sorter: true,
-      defaultSortOrder: 'descend',
       render: (_, r) => r.stars.toLocaleString(),
     },
     {
       title: (
-        <Tooltip title="100 × 可行性 × 适配门控 × 加权(热度/移动相关/工作量/生态缺口)">
-          <span>适配优先级</span>
+        <Tooltip title="最佳可信结合机会 × 证据置信度 × 温和的项目影响力修正">
+          <span>生态机会优先级</span>
         </Tooltip>
       ),
       dataIndex: 'priority_score',
@@ -321,7 +347,7 @@ function DesktopBoard({
 
   return (
     <ProTable<BoardRow>
-      headerTitle="鸿蒙适配优先级总榜"
+      headerTitle="鸿蒙生态结合机会总榜"
       rowKey="id"
       actionRef={actionRef}
       columns={columns}
@@ -349,12 +375,12 @@ function DesktopBoard({
         try {
           const sortField = sort && Object.keys(sort).length > 0 ? Object.keys(sort)[0] : undefined;
           const sortDir = sortField ? sort[sortField] : undefined;
-          const orderBy = sortField ?? 'stars';
-          const orderAsc = sortDir === 'ascend';
+          const orderBy = sortField ?? 'rank';
+          const orderAsc = sortField ? sortDir === 'ascend' : true;
 
           const language = filter?.primary_language?.[0] as string | undefined;
           const category = filter?.category?.[0] as string | undefined;
-          const effectiveState = filter?.effective_state?.[0] as HarmonyState | undefined;
+          const supportAvailability = filter?.support_availability?.[0] as SupportAvailability | undefined;
           const archVal = filter?.is_archived?.[0] as string | undefined;
           const archived =
             archVal === 'true' ? true
@@ -369,7 +395,7 @@ function DesktopBoard({
             filters: {
               keyword: keywordRef.current || undefined,
               category,
-              effectiveState,
+              supportAvailability,
               language,
               archived,
             },

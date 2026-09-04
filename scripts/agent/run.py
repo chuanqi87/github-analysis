@@ -27,7 +27,7 @@
 环境变量:
     DASHSCOPE_API_KEY    - 百炼 API Key（必需）
     DASHSCOPE_BASE_URL   - 百炼 API 地址（默认 dashscope.aliyuncs.com）
-    CODE_ANALYSIS_MODEL  - 分析模型（默认 qwen3-max）
+    CODE_ANALYSIS_MODEL  - 分析模型（默认 qwen3.8-max）
     GITHUB_TOKEN         - GitHub PAT（可选，提升配额）
     SUPABASE_URL         - Supabase URL（--from-db / --write-db 模式需要）
     SUPABASE_SERVICE_ROLE_KEY - Supabase Service Key（--from-db / --write-db 模式需要）
@@ -265,12 +265,12 @@ async def main():
         elif "parse_error" in analysis:
             print(f"  ⚠️  {owner}/{name}: JSON 解析失败", file=sys.stderr)
         else:
-            harmony = analysis.get("harmony_suggestion", "?")
+            verdict = analysis.get("opportunity_verdict", "?")
             feasibility = analysis.get("feasibility", "?")
             effort = analysis.get("effort_estimate", "?")
             print(
                 f"  ✅ {owner}/{name}: "
-                f"harmony={harmony}, "
+                f"opportunity={verdict}, "
                 f"feasibility={feasibility}, "
                 f"effort={effort}",
                 file=sys.stderr,

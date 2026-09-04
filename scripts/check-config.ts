@@ -98,7 +98,7 @@ async function dashscopeCall(base: string, model: string, key: string) {
 async function checkDashscope() {
   const key = process.env.DASHSCOPE_API_KEY;
   const base = process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-  const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
+  const model = process.env.DASHSCOPE_MODEL ?? 'qwen3.8-max';
   console.log('\n── 阿里百炼 / DashScope ──');
   console.log(`  API_KEY: ${mask(key)}`);
   console.log(`  BASE_URL: ${base}`);

@@ -1,5 +1,11 @@
 // 汇总鸿蒙化自动信号(仅辅助人工审核,不做最终判定)。
-import type { HarmonyState } from '@/lib/types';
+import type {
+  HarmonyState,
+  SupportAvailability,
+  SupportCoverage,
+  SupportEvidence,
+  SupportProvenance,
+} from '@/lib/types';
 import { keywordHits, keywordScore } from '@/lib/harmony/keywords';
 import { findOhpmPackage } from '@/lib/harmony/ohpm';
 import { matchRegistry, type RegistryIndex } from '@/lib/harmony/registry';
@@ -37,6 +43,11 @@ export interface CollectedSignals {
   source_repo_url: string | null;
   keyword_score: number;
   auto_state_hint: HarmonyState;
+  support_availability: SupportAvailability;
+  support_provenance: SupportProvenance;
+  support_coverage: SupportCoverage;
+  support_confidence: number;
+  support_evidence: SupportEvidence[];
   signals: Record<string, unknown>;
   // GitCode 搜索结果
   gitcode_matched: boolean;
@@ -44,6 +55,136 @@ export interface CollectedSignals {
   gitcode_repo_name: string | null;
   // DeepWiki 代码级检索出的鸿蒙证据分级(仅 dedicated_port 构成适配证据)
   deepwiki_scope: HarmonyScope | null;
+  /** 管理台人工标记是最终权威；分析机会时必须优先扣除其确认的支持范围。 */
+  manual_override?: { state: HarmonyState; note: string | null; marked_at: string } | null;
+}
+
+export interface SupportAssessment {
+  availability: SupportAvailability;
+  provenance: SupportProvenance;
+  coverage: SupportCoverage;
+  confidence: number;
+  evidence: SupportEvidence[];
+}
+
+export interface SupportAssessmentInput {
+  ohpmMatched: boolean;
+  ohpmPackages?: { pkg: string; repository: string | null }[] | null;
+  upstreamProject: boolean;
+  upstreamPaths?: string[];
+  gitcodeMatched: boolean;
+  gitcodeRepoUrl: string | null;
+  registryMatched: boolean;
+  registrySource: string | null;
+  deepwikiScope: HarmonyScope | null;
+  deepwikiPaths?: string[];
+  ohpmChecked: boolean;
+  gitcodeChecked: boolean;
+  deepwikiIndexed: boolean;
+}
+
+/**
+ * 从可核验信号推导“已支持现状”。没有证据时保持 UNKNOWN；只有完成主要来源检索且
+ * 代码索引明确无痕迹时，才使用 NO_PUBLIC_SUPPORT_FOUND。
+ */
+export function deriveSupportAssessment(input: SupportAssessmentInput): SupportAssessment {
+  const evidence: SupportEvidence[] = [];
+  if (input.ohpmMatched) {
+    for (const item of input.ohpmPackages ?? []) {
+      evidence.push({ source: 'ohpm', kind: 'package', reference: item.pkg, strength: 'strong' });
+    }
+    return {
+      availability: 'USABLE',
+      provenance: 'OFFICIAL_ECOSYSTEM',
+      coverage: 'CORE_ONLY',
+      confidence: 0.95,
+      evidence,
+    };
+  }
+
+  if (input.gitcodeMatched && isTrustedGitcodeOrg(input.gitcodeRepoUrl)) {
+    evidence.push({
+      source: 'gitcode',
+      kind: 'community_port',
+      reference: input.gitcodeRepoUrl ?? 'GitCode 官方组织仓库',
+      strength: 'strong',
+    });
+    return {
+      availability: 'USABLE',
+      provenance: 'OFFICIAL_ECOSYSTEM',
+      coverage: 'CORE_ONLY',
+      confidence: 0.85,
+      evidence,
+    };
+  }
+
+  // DeepWiki 的显式 scope 比 GraphQL 的粗粒度文件标志更具体。构建矩阵里出现
+  // HarmonyOS 时，即使同时命中 oh-package/entry 等弱工程标志，也不能升级成适配。
+  if (input.deepwikiScope === 'build_target_only') {
+    for (const path of (input.deepwikiPaths ?? []).slice(0, 10)) {
+      evidence.push({ source: 'deepwiki', kind: 'build_target', reference: path, strength: 'strong' });
+    }
+    return {
+      availability: 'BUILD_TARGET_ONLY',
+      provenance: 'UPSTREAM',
+      coverage: 'BUILD_ONLY',
+      confidence: 0.9,
+      evidence,
+    };
+  }
+
+  if (input.upstreamProject || input.deepwikiScope === 'dedicated_port') {
+    for (const path of [...(input.upstreamPaths ?? []), ...(input.deepwikiPaths ?? [])].slice(0, 10)) {
+      evidence.push({ source: 'upstream', kind: 'project_files', reference: path, strength: 'strong' });
+    }
+    return {
+      availability: 'PARTIAL',
+      provenance: 'UPSTREAM',
+      coverage: 'SUBMODULE',
+      confidence: evidence.length ? 0.85 : 0.72,
+      evidence,
+    };
+  }
+
+  if (input.registryMatched || input.gitcodeMatched) {
+    const reference = input.gitcodeRepoUrl ?? input.registrySource ?? '鸿蒙三方库底表';
+    evidence.push({
+      source: input.gitcodeMatched ? 'gitcode' : 'registry',
+      kind: 'community_port',
+      reference,
+      strength: input.gitcodeMatched ? 'weak' : 'medium',
+    });
+    return {
+      availability: 'PARTIAL',
+      provenance: 'COMMUNITY',
+      coverage: 'UNKNOWN',
+      confidence: input.gitcodeMatched ? 0.45 : 0.6,
+      evidence,
+    };
+  }
+
+  if (
+    input.ohpmChecked &&
+    input.gitcodeChecked &&
+    input.deepwikiIndexed &&
+    input.deepwikiScope === 'none'
+  ) {
+    return {
+      availability: 'NO_PUBLIC_SUPPORT_FOUND',
+      provenance: 'UNKNOWN',
+      coverage: 'UNKNOWN',
+      confidence: 0.72,
+      evidence,
+    };
+  }
+
+  return {
+    availability: 'UNKNOWN',
+    provenance: 'UNKNOWN',
+    coverage: 'UNKNOWN',
+    confidence: 0.25,
+    evidence,
+  };
 }
 
 function decideHint(s: {
@@ -141,6 +282,29 @@ export async function collectHarmonySignals(
     gitcodeTrusted: isTrustedGitcodeOrg(gitcodeRepoUrl),
     deepwikiPort,
   });
+  const upstreamPaths = [
+    hasOhPackage ? 'oh-package.json5' : null,
+    hasBuildProfile ? 'build-profile.json5' : null,
+    hasModuleJson ? 'module.json5' : null,
+    hasHvigor ? 'hvigorfile' : null,
+    hasEntry ? 'entry/' : null,
+    hasEts ? '*.ets' : null,
+  ].filter((value): value is string => value != null);
+  const support = deriveSupportAssessment({
+    ohpmMatched,
+    ohpmPackages,
+    upstreamProject: project || hasEts,
+    upstreamPaths,
+    gitcodeMatched,
+    gitcodeRepoUrl,
+    registryMatched: reg.hit,
+    registrySource: reg.hit ? reg.source : null,
+    deepwikiScope,
+    deepwikiPaths: facts?.harmony?.harmony_paths ?? [],
+    ohpmChecked: shouldOhpm,
+    gitcodeChecked: shouldGitCode,
+    deepwikiIndexed: facts?.indexed ?? false,
+  });
 
   return {
     ohpm_matched: ohpmMatched,
@@ -156,6 +320,11 @@ export async function collectHarmonySignals(
     source_repo_url: sourceRepoUrl,
     keyword_score: kwScore,
     auto_state_hint: hint.state,
+    support_availability: support.availability,
+    support_provenance: support.provenance,
+    support_coverage: support.coverage,
+    support_confidence: support.confidence,
+    support_evidence: support.evidence,
     signals: {
       suspected: hint.suspected,
       keyword_hits: kwList,

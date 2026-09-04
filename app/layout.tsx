@@ -5,7 +5,7 @@ import AppShell from '@/components/AppShell';
 
 export const metadata: Metadata = {
   title: '鸿蒙生态适配分析看板',
-  description: 'GitHub Top 项目的鸿蒙(HarmonyOS/OpenHarmony)适配价值分析与优先级排序',
+  description: 'GitHub Top 项目的鸿蒙支持现状与生态结合机会分析',
 };
 
 export const viewport: Viewport = {

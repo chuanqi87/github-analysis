@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getAdminClient } from '@/lib/supabase/admin';
+import { scoreRepositoryOpportunities } from '@/lib/scoring/opportunity';
+import type { AdaptationPoint } from '@/lib/types';
 
 type Status = 'success' | 'failed' | 'skipped';
 
@@ -138,10 +140,14 @@ function successful(rows: ExecutionLog[], tier: 1 | 2 | 3): ExecutionLog[] {
 
 function historicalDeepScore(row: ExecutionLog, tier2: ExecutionLog | undefined, hotScore: number): number {
   const output = tier2?.output ?? row.output ?? {};
-  const mobile = Number(output.mobile_relevance ?? 0);
+  const mobile = Number(output.client_relevance ?? output.mobile_relevance ?? 0);
   const feasible = Number(output.feasibility ?? 0);
   const gap = Number(output.ecosystem_gap ?? 0);
   const confidence = Number(output.confidence ?? 0);
+  if (row.prompt_version.startsWith('p10') || row.prompt_version.startsWith('p11')) {
+    const opportunities = (output.opportunities ?? []) as AdaptationPoint[];
+    return scoreRepositoryOpportunities(opportunities) / 100;
+  }
   if (row.prompt_version.startsWith('p9')) {
     const leverage = Number(output.harmony_leverage ?? 0.3);
     return 0.1 * hotScore + 0.2 * mobile + 0.1 * feasible + 0.15 * gap + 0.4 * leverage + 0.05 * confidence;
@@ -151,7 +157,7 @@ function historicalDeepScore(row: ExecutionLog, tier2: ExecutionLog | undefined,
 
 function scoreAudit(rows: ExecutionLog[]) {
   return {
-    mobile_relevance: distribution(rows.map((row) => Number(row.output?.mobile_relevance))),
+    mobile_relevance: distribution(rows.map((row) => Number(row.output?.client_relevance ?? row.output?.mobile_relevance))),
     feasibility: distribution(rows.map((row) => Number(row.output?.feasibility))),
     confidence: distribution(rows.map((row) => Number(row.output?.confidence))),
   };
@@ -159,7 +165,7 @@ function scoreAudit(rows: ExecutionLog[]) {
 
 function detailedOutputAudit(rows: ExecutionLog[]) {
   const points = rows.flatMap((row) =>
-    (row.output?.adaptation_points ?? []).map((point: Record<string, any>) => ({ row, point })),
+    (row.output?.opportunities ?? row.output?.adaptation_points ?? []).map((point: Record<string, any>) => ({ row, point })),
   );
   const kitNames = points.flatMap(({ point }) => point.target_kits ?? []).map(String);
   const integrationForms = points.map(({ point }) => String(point.integration_form));
@@ -173,7 +179,7 @@ function detailedOutputAudit(rows: ExecutionLog[]) {
   return {
     projects: rows.length,
     points: points.length,
-    points_per_project: distribution(rows.map((row) => (row.output?.adaptation_points ?? []).length)),
+    points_per_project: distribution(rows.map((row) => (row.output?.opportunities ?? row.output?.adaptation_points ?? []).length)),
     generic_points: genericPoints.length,
     evidence_with_file_path: pathEvidencePoints.length,
     empty_target_devices: emptyDevices.length,
@@ -212,10 +218,10 @@ async function main() {
         stars: repos.get(row.repository_id)?.stars ?? 0,
         deep_score: historicalDeepScore(row, tier2ByRepo.get(row.repository_id), hotScore),
         hot_score: hotScore,
-        mobile_relevance: row.output?.mobile_relevance,
+        mobile_relevance: row.output?.client_relevance ?? row.output?.mobile_relevance,
         feasibility: row.output?.feasibility,
         ecosystem_gap: row.output?.ecosystem_gap,
-        point_count: row.output?.adaptation_points?.length ?? 0,
+        point_count: (row.output?.opportunities ?? row.output?.adaptation_points ?? []).length,
       };
     })
     .sort((a, b) => b.deep_score - a.deep_score);
@@ -224,8 +230,8 @@ async function main() {
     const base = tier2ByRepo.get(deepRow.repository_id);
     return {
       repository: repos.get(deepRow.repository_id)?.full_name ?? String(deepRow.repository_id),
-      point_delta: (deepRow.output?.adaptation_points?.length ?? 0) - (base?.output?.adaptation_points?.length ?? 0),
-      mobile_delta: Number(deepRow.output?.mobile_relevance ?? 0) - Number(base?.output?.mobile_relevance ?? 0),
+      point_delta: (deepRow.output?.opportunities ?? deepRow.output?.adaptation_points ?? []).length - (base?.output?.opportunities ?? base?.output?.adaptation_points ?? []).length,
+      mobile_delta: Number(deepRow.output?.client_relevance ?? deepRow.output?.mobile_relevance ?? 0) - Number(base?.output?.client_relevance ?? base?.output?.mobile_relevance ?? 0),
       feasibility_delta: Number(deepRow.output?.feasibility ?? 0) - Number(base?.output?.feasibility ?? 0),
       prompt_char_delta: (deepRow.user_prompt?.length ?? 0) - (base?.user_prompt?.length ?? 0),
       output_same: JSON.stringify(deepRow.output) === JSON.stringify(base?.output),
@@ -237,7 +243,7 @@ async function main() {
     generated_at: new Date().toISOString(),
     executions: Object.fromEntries([1, 2, 3].map((tier) => [tier, stageSummary(logs.filter((row) => row.tier === tier))])),
     tier1_scores: scoreAudit(tier1),
-    tier1_statuses: frequency(tier1.map((row) => String(row.output?.harmony_suggestion))),
+    tier1_statuses: frequency(tier1.map((row) => String(row.output?.opportunity_verdict ?? row.output?.harmony_suggestion))),
     tier1_categories: frequency(tier1.map((row) => String(row.output?.category)), 30),
     tier1_evidence: {
       deepwiki_indexed: tier1.filter((row) => row.evidence?.deepwiki?.indexed).length,

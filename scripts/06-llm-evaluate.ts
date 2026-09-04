@@ -8,6 +8,7 @@ import type { AnalyzeRepo } from '@/lib/llm/classify';
 import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
 import { loadCategoryTree } from '@/lib/category/loader';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 import { refreshAnalysisQueue, selectTier2Candidates } from '@/lib/pipeline/candidates';
@@ -19,28 +20,8 @@ import {
   flushAnalysisExecutionLogs,
   type AnalysisExecutionRow,
 } from '@/lib/pipeline/analysis-log';
-
-/**
- * 加载品类适配现状(v_category_stats),格式化为 prompt 文本。
- * 用于锚定 LLM 的 ecosystem_gap 评分;查询失败不阻断流程(降级为无统计)。
- */
-async function loadCategoryStatsText(): Promise<string | null> {
-  try {
-    const { data, error } = await getAdminClient()
-      .from('v_category_stats')
-      .select('category, category_name, total, adapted');
-    if (error || !data?.length) {
-      if (error) log(`加载 v_category_stats 失败(降级为无统计):${error.message}`);
-      return null;
-    }
-    return (data as { category: string; category_name: string; total: number; adapted: number }[])
-      .map((r) => `- ${r.category}(${r.category_name}):已适配 ${r.adapted} / 共 ${r.total}`)
-      .join('\n');
-  } catch (err) {
-    log(`加载 v_category_stats 异常(降级为无统计):${String(err).slice(0, 120)}`);
-    return null;
-  }
-}
+import { scoreRepositoryOpportunities } from '@/lib/scoring/opportunity';
+import { loadHistoricalAnalysisContexts } from '@/lib/llm/history-context';
 
 async function loadTier1Ids(): Promise<Set<number>> {
   const client = getAdminClient();
@@ -83,6 +64,7 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
 export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('llm-evaluate');
   try {
+    await assertAnalysisSchema();
     const tier1 = await loadTier1Ids();
     const limit = opts.limit ?? 100;
     if (!opts.ids?.length) await refreshAnalysisQueue();
@@ -100,16 +82,21 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
     const ids = candidates.map((r) => r.id);
     const signals = await loadSignalsMap(ids);
     const deepwiki = await loadDeepwikiMap(ids);
+    const historyContexts = await loadHistoricalAnalysisContexts(candidates.map((repo) => ({
+      id: repo.id,
+      owner: repo.owner,
+      full_name: repo.full_name,
+      primary_language: repo.primary_language,
+      topics: repo.topics,
+    })));
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
 
     // 加载动态分类树(管道侧用 service_role,绕过 RLS)
     const adminClient = getAdminClient();
     const categoryTree = await loadCategoryTree(adminClient);
-    const categoryStats = await loadCategoryStatsText();
     const withFacts = candidates.filter((r) => deepwikiFor(deepwiki, r.id)?.indexed).length;
     log(
       `tier-2 深评 ${candidates.length} 个候选(百炼),${categoryTree.length} 个分类节点` +
-        `${categoryStats ? ',已注入品类适配统计' : ''}` +
         `,${withFacts} 个带 DeepWiki 代码事实…`,
     );
 
@@ -134,7 +121,8 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
           license: repo.license,
         };
         const facts = deepwikiFor(deepwiki, repo.id);
-        const hash = evaluateInputHash(analyzeRepo, sig, repo.readme_text, facts);
+        const history = historyContexts.get(repo.id) ?? [];
+        const hash = evaluateInputHash(analyzeRepo, sig, repo.readme_text, facts, history);
         if (existing.get(repo.id) === hash) {
           skipped++;
           executionRows.push(captureAnalysisExecution({
@@ -157,13 +145,14 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             sig,
             repo.readme_text,
             categoryTree,
-            categoryStats,
             facts,
+            history,
           );
 
           // 解析分类 slug → 数据库 ID,处理新分类提议
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);
           if (resolved.created_new) newCategories++;
+          const opportunityScore = scoreRepositoryOpportunities(out.data.opportunities);
 
           rows.push({
             repository_id: repo.id,
@@ -177,17 +166,19 @@ export async function runLlmEvaluate(opts: StageOpts = {}): Promise<void> {
             // 旧列:兼容过渡
             category: resolved.category_enum,
             subcategory: out.data.subcategory || '',
-            harmony_suggestion: out.data.harmony_suggestion,
-            mobile_relevance: out.data.mobile_relevance,
+            harmony_suggestion: null,
+            mobile_relevance: out.data.client_relevance,
             feasibility: out.data.feasibility,
             effort_estimate: out.data.effort_estimate,
             ecosystem_gap: out.data.ecosystem_gap,
             harmony_leverage: out.data.harmony_leverage,
-            adaptation_points: out.data.adaptation_points,
+            opportunity_verdict: out.data.opportunity_verdict,
+            opportunity_score: opportunityScore,
+            adaptation_points: out.data.opportunities,
+            analysis_details: out.data.analysis_details,
             recommended_approach: out.data.recommended_approach,
             reasoning: out.data.reasoning,
             project_summary_cn: out.data.project_summary_cn,
-            harmony_adapted_repo_url: out.data.harmony_adapted_repo_url,
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,

@@ -197,14 +197,14 @@ export default function Tier3Analysis({ repositoryId }: Props) {
           </Row>
         </Panel>
 
-        {/* 适配点（带代码证据） */}
+        {/* 经 tier-3 逐条验证的结合机会 */}
         <Panel
           header={
             <Space>
               <BulbOutlined />
-              <Text strong>适配点分析</Text>
+              <Text strong>已验证结合机会</Text>
               <Text type="secondary">
-                ({data.adaptation_points?.length ?? 0} 个适配点)
+                ({data.adaptation_points?.length ?? 0} 个机会)
               </Text>
             </Space>
           }
@@ -232,6 +232,11 @@ export default function Tier3Analysis({ repositoryId }: Props) {
                         <Text strong>可复用资产：</Text>{ap.project_assets}
                       </Paragraph>
                     )}
+                    {ap.uncovered_scope && (
+                      <Paragraph style={{ margin: '4px 0 0' }}>
+                        <Text strong>未覆盖范围：</Text>{ap.uncovered_scope}
+                      </Paragraph>
+                    )}
                     <Space size={[4, 4]} wrap>
                       {ap.integration_form && <Tag color="blue">{ap.integration_form}</Tag>}
                       {ap.target_devices?.map((device) => <Tag key={device}>{device}</Tag>)}
@@ -254,6 +259,14 @@ export default function Tier3Analysis({ repositoryId }: Props) {
                         📍 证据: {ap.evidence}
                       </Paragraph>
                     )}
+                    {ap.evidence_refs?.length ? (
+                      <Paragraph
+                        code
+                        style={{ marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                      >
+                        📍 证据: {ap.evidence_refs.join('；')}
+                      </Paragraph>
+                    ) : null}
                   </div>
                 </Space>
               </List.Item>

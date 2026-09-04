@@ -6,8 +6,10 @@
 //     判定规则相应加入"构建矩阵命中不等于已适配"的反误判条款。
 // p7: 适配点升级为“项目能力 × 鸿蒙生态”契合矩阵，明确设备、Kit、交付形态与可复用资产。
 // p8: 注入经本地 HarmonyOS 官方文档核验的 Kit 能力边界，抑制 Kit 名称误用。
-// p9: 把“通用可用性”与“鸿蒙专属增量”拆开；修正生态缺口饱和、通用库高估，
-//     并把 Kit 输出约束到官方名称或“需验证:<能力>”。
+// p9: 把“通用可用性”与“鸿蒙专属增量”拆开；修正生态缺口饱和、通用库高估。
+// p10: 支持现状改由信号层确定性推导；LLM 只做能力画像与结合机会分析。
+// p11: 深评升级为技术尽调，注入同组织/相似项目历史分析作为待复核先验；扩大 README
+//      与代码事实上下文，允许模型基于新证据补充机会，并输出否决项和投资决策条件。
 // project_summary_cn: 新增中文简介字段,不 bump 版本,以免触发全量 LLM 重跑;
 //     新分析或 --force 会产出该字段,前端对旧数据用分类/评估理由兜底。
 import type { CollectedSignals } from '@/lib/harmony/signals';
@@ -15,12 +17,16 @@ import type { CategoryTreeNode } from '@/lib/types';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
 import { isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
 import { formatCategoryList } from '@/lib/category/loader';
+import {
+  formatHistoricalAnalysisContext,
+  type HistoricalAnalysisReference,
+} from '@/lib/llm/history-context';
 
-export const PROMPT_VERSION = 'p9';
+export const PROMPT_VERSION = 'p11';
 
 /** tier-1 只看 README 头部;tier-2 看更长片段。 */
 export const README_CHARS_TIER1 = 2000;
-export const README_CHARS_TIER2 = 6000;
+export const README_CHARS_TIER2 = 14000;
 
 /** 按 UTF-16 长度截断，但不把 emoji 等补充平面字符的代理对切成两半。 */
 function sliceAtCodePointBoundary(value: string, maxChars: number): string {
@@ -55,46 +61,44 @@ export function prepareReadme(readme: string | null | undefined, maxChars: numbe
     : cleaned;
 }
 
-const STATE_RULES = `## A. 适配状态判定(harmony_suggestion)——事实题
+const SUPPORT_CONTEXT_RULES = `## A. 已支持现状——只作为事实上下文
 
-只依据下方「已知鸿蒙信号」和 README 中的明确证据判定,按优先级从上到下,命中即停:
+“已支持现状”已由信号层按证据确定性推导，LLM **不得再次输出或改写状态**。
+缺少信号表示 UNKNOWN，不等于未适配；BUILD_TARGET_ONLY 只代表构建/ABI 目标，不代表项目已有鸿蒙实现。
+若出现 [人工权威] 标记，以人工状态和备注为最高优先级。人工标为 ADAPTED 且未注明缺口时，不得再次建议基础移植；
+只有证据能说明新增交付物超出既有覆盖时，才可保留增量机会。
+分析结合机会时必须扣除已覆盖范围：已有支持已经完整覆盖的能力不能再次列为新机会。`;
 
-1. 信号显示 ohpm 中心仓已上架 → **ADAPTED**
-2. 信号显示 GitCode **官方组织(标注 [强])** 存在适配仓 → **ADAPTED**
-3. 本仓库自带鸿蒙工程文件或 .ets 源码,或 DeepWiki 证据分级为 \`dedicated_port\`:
-   README/描述明确宣称支持 HarmonyOS/OpenHarmony → **ADAPTED**;仅有文件无宣称 → **PARTIAL**
-4. GitCode 搜索命中但**非官方组织(标注 [弱])** → **PARTIAL**(可能是镜像/个人试验仓,须在置信度上打折)
-5. 命中鸿蒙三方库底表 → **PARTIAL**
-6. 无以上信号:
-   - 项目对鸿蒙生态有可落地的适配/贡献价值 → **PENDING_ADAPTATION**(大多数项目)
-   - 纯社会倡议/非技术内容、与特定 OS 深度绑定且在鸿蒙上无意义(如 Windows 激活工具)、已废弃且无参考价值 → **NOT_APPLICABLE**
+const SCORE_RUBRIC_BASE = `## B. 价值评估——先完成技术判断，最后才给分
 
-硬性纪律:
-- **NOT_ADAPTED 不要输出**(它只是信号采集层的默认值)
-- **harmony_adapted_repo_url 只能填信号中给出的 URL,严禁自行构造或凭记忆猜测**;无信号则填 null
-- 判定与信号冲突时以信号为准;若 README 有反证(如"鸿蒙版已废弃"),在置信度中体现并说明
-- **反误判**:DeepWiki 证据分级为 \`build_target_only\`(鸿蒙只是构建/平台矩阵里的一项)或
-  \`incidental_mention\`(只在文档、注释、changelog、单条平台字符串比较里出现)时,
-  **不构成适配证据**,不得据此判 ADAPTED 或 PARTIAL。典型反例:某大型前端框架的
-  napi 产物列表里带一个 openharmony 目标,这只说明它的构建工具支持该 ABI,
-  不代表项目本身做过鸿蒙适配`;
-
-const SCORE_RUBRIC_BASE = `## B. 价值评估——分析题,用锚点标尺打分
+数值字段只是便于跨项目排序的压缩摘要，不能代替分析。先依据架构、依赖、平台边界、生态替代品和维护路径形成判断，
+再用下面锚点校准分数；不要为了匹配分数而倒推结论，也不要把示例当成封闭清单。
 
 打分必须落到该项目的具体技术栈/依赖/功能上,**用满区间、拉开区分度**,不要挤在 0.6~0.8。
 
-### mobile_relevance(对鸿蒙生态的价值)
+### client_relevance(项目能力与鸿蒙终端的直接相关度)
 - 0.9~1.0:端侧应用会直接依赖的核心库——UI 组件/框架、跨端框架、移动端网络/图片/存储/动画库、知名移动 App 本身
 - 0.6~0.8:端侧可复用的通用能力——通用算法/工具库、媒体编解码、端侧 AI 推理、图形渲染
 - 0.35~0.55:间接价值——开发工具链/构建/CI(可加鸿蒙支持)、带官方客户端 SDK 的服务(只评其 SDK 部分)、移动/客户端主题的教程课程
 - 0.15~0.3:弱关联——纯服务端框架/基础设施、桌面专属应用、通用 CS 学习资源(仅能做本地化)
 - 0~0.1:无关——纯运维/云平台内部组件、特定 OS 专属 hack、非技术内容
 
-**反膨胀规则**:如果该项目唯一的"贡献路径"是翻译文档/补鸿蒙章节/加 ArkTS 示例这类放在任何项目上都成立的通用动作,mobile_relevance 不得超过 0.3。
+**反膨胀规则**:如果唯一贡献路径是翻译文档/补鸿蒙章节/加 ArkTS 示例，client_relevance 不得超过 0.3。
 
 **平台无关通用库校准**:lodash/dayjs/nanoid/JSON 库/不可变数据/纯状态机这类无需鸿蒙专属工作即可直接复用的项目，
-即使流行且移植很容易，mobile_relevance 通常只能在 0.35~0.6；除非材料证明它承担鸿蒙端侧关键运行时、UI、
+即使流行且移植很容易，client_relevance 通常只能在 0.35~0.6；除非材料证明它承担鸿蒙端侧关键运行时、UI、
 跨设备或系统能力接口，否则严禁给 0.9 以上。0.9 以上只给“鸿蒙应用直接依赖且需要专属平台实现”的核心能力。
+
+### platform_integration_need(仅 tier-1)
+- 0~0.2:平台无关代码可直接使用，不需要鸿蒙专属实现
+- 0.3~0.5:主要是工程化、兼容性修补或少量系统 API 替换
+- 0.6~0.8:需要 ArkUI、Node-API、平台后端、Kit 或跨端插件
+- 0.9~1.0:运行时/引擎/关键基础设施存在明确的鸿蒙平台插槽
+
+### reusable_asset_strength(仅 tier-1)
+- 0~0.3:材料中没有可定位的项目资产
+- 0.4~0.6:能定位功能或依赖，但看不到清晰扩展点
+- 0.7~1.0:存在真实模块、接口、算法、平台抽象层或既有多平台后端
 
 ### feasibility(适配可行性)
 - 0.85~1.0:纯 TS/JS/纯逻辑代码无平台绑定;或上游已有清晰的多平台抽象层
@@ -116,11 +120,9 @@ const SCORE_RUBRIC_TIER2 = `
 - 0.7~0.8:框架级适配(渲染后端、平台通道、插件体系)
 - ≥0.9:引擎/运行时级移植(浏览器内核、游戏引擎、语言 VM)
 
-### ecosystem_gap(品类生态空白度)
-- 数据库的“已适配比例”只是观测下限，不是 gap 本身。先算原始稀缺度 1−适配比例，再乘以端侧重要性与替代品缺失程度。
-- 若项目本身是平台无关代码、无需移植即可使用，或鸿蒙已有同类标准能力，gap 必须降到 0.1~0.4，不能因数据库未标记适配就给 1.0。
-- 0.8~1.0 仅用于“鸿蒙端侧确实缺少可用等价物，且该项目能形成关键补位”的品类；reasoning 必须写出缺的具体能力。
-- 无数据时按材料谨慎估计；不知道替代品现状就给 0.5 左右并明确“需验证”，不要假装确定。
+### ecosystem_gap(仓库级参考值)
+- 只能由保留下来的具体机会支撑；没有独立缺口证据时不超过 0.5。
+- 项目无需专属工作即可使用，或已有支持覆盖该能力时，必须降到 0~0.3。
 
 ### harmony_leverage(鸿蒙专属增量价值)
 - 0~0.2:代码已经平台无关，最多换包管理器/写示例即可使用；没有鸿蒙专属实现价值
@@ -128,22 +130,29 @@ const SCORE_RUBRIC_TIER2 = `
 - 0.6~0.8:能形成明确的 ArkUI 组件、Node-API 模块、HarmonyOS 平台后端、Kit 集成或端侧 AI 能力
 - 0.9~1.0:能补齐关键鸿蒙基础能力或产生手机/平板/穿戴/智慧屏/车机间独有的协同价值
 
-该分数与 feasibility 无关：容易做不代表增量大。必须能由 adaptation_points 中至少一个鸿蒙专属交付面支撑，
+该分数与 feasibility 无关：容易做不代表增量大。必须能由 opportunities 中至少一个鸿蒙专属交付面支撑，
 否则 harmony_leverage 不得超过 0.4。`;
 
 const TIER2_OUTPUT_RULES = `
-## tier-2 输出纪律(反泛泛而谈)
+## tier-2 专业尽调要求
 
-- **adaptation_points 是“项目能力 × 鸿蒙生态”的契合清单**(最多 6 条),每条必须同时回答:
+- 先完成 analysis_details：还原架构与平台边界，拆解真正需要修改的模块，识别阻塞依赖、替代方案、维护模式、
+  投入前置条件与停止条件。不能只复述 README，也不能用数值分数代替因果分析。
+- **opportunities 是经过自我反证后的结合机会**(最多 5 条，也可以为空),每条必须同时回答:
   ①项目已有的哪个模块/接口/算法可复用(project_assets)
   ②它补足鸿蒙的什么生态缺口、服务什么设备/跨设备场景(harmony_value + target_devices)
-  ③应以 ohpm 包、ArkUI 组件、NAPI 模块、平台后端、SDK 插件、应用能力或文档工具中的哪种形态交付(integration_form)
+  ③应以 ohpm 包、ArkUI 组件、Node-API 模块、平台后端、SDK 插件、应用能力或文档工具中的哪种形态交付(integration_form)
   ④需要对接哪些 HarmonyOS Kit/API(target_kits)。没有材料支撑时明确写“需验证”,不要猜具体 API 名。
-  description 写实际实施动作,evidence 引用给定材料中的依据。
+  ⑤当前支持还没有覆盖什么(uncovered_scope)
+  ⑥用 evidence_refs 引用给定材料中的真实路径、原文或 URL。
+  description 和 implementation_outline 写实际交付动作。
   **有 DeepWiki 代码事实时优先引用其中的真实文件路径**(如"在 src/os_unix.c 同级新增 os_ohos.c"),
   这比引 README 原文更有说服力;但**只能引材料里出现过的路径,不得自行拼造**
-- 禁止把“翻译文档、增加示例、适配鸿蒙”这种任何项目都成立的动作当作主要契合点；除非项目本身就是文档/教学/工具链。
-- 优先识别鸿蒙生态的真实契合面：ArkUI 声明式 UI、多设备形态、自适应布局、端侧 AI、音视频、图形、网络、数据管理、NAPI 原生库、跨端框架平台后端、分布式协同。只选择与项目能力确实相关的项。
+- 禁止把“翻译文档、增加示例、适配鸿蒙”这种任何项目都成立的动作当作结合机会；除非项目本身就是文档/教学/工具链。
+- **先提出候选、再反证、最后保留**：平台无关代码已经可直接用、鸿蒙已有等价能力、没有项目特定资产、只有构建目标命中、
+  或无法说明未覆盖范围时，移入 analysis_details.rejected_options，并写清否决原因。不要把被否决方案包装成低分机会。
+- 没有任何机会通过门槛时，opportunity_verdict=NO_CLEAR_OPPORTUNITY、opportunities=[]、recommended_approach=null。这是正常且优先于凑答案的结果。
+- 优先识别鸿蒙生态的真实契合面：ArkUI 声明式 UI、多设备形态、自适应布局、端侧 AI、音视频、图形、网络、数据管理、Node-API 原生模块、跨端框架平台后端、分布式协同。只选择与项目能力确实相关的项。
 
 ### HarmonyOS 官方能力边界（已由本地官方文档核验）
 - ArkTS/JS 与 C/C++ 交互称 **Node-API**；不要写成一个虚构的“NAPI Kit”。
@@ -160,15 +169,14 @@ const TIER2_OUTPUT_RULES = `
 - 手势、动画、导航若只是 UI 交互，写 **ArkUI（手势/动画/Navigation API）**，不要虚构“Gesture Kit”“Animation Kit”“Navigation Kit”。
 - target_kits 只能写上面已核验名称、ArkUI、Web Kit 或材料明确给出的 @ohos/@hms API。
   材料不足时写“需验证:<所需能力>”（例如“需验证:跨设备状态同步”），禁止只写无信息量的“需验证”或拼造 Kit 名称。
-- **recommended_approach**:指明具体技术路径与入手点(如"用 NAPI 封装 core/ 下的 C 解码模块,JS API 层可直接复用"),不写"建议评估后适配"这类空话
-- **reasoning** 按固定结构组织:①技术栈与平台耦合点 ②适配现状证据(引用信号/README)③推荐路径依据 ④关键风险(license/原生依赖/维护状态)
-- **harmony_leverage 与 adaptation_points 一致性**:若所有交付形态只是 ohpm_package/docs_tooling，且没有鸿蒙专属 API/设备价值，
+- **recommended_approach**:指明具体技术路径与入手点(如"用 Node-API 封装 core/ 下的 C 解码模块,JS API 层可直接复用"),不写"建议评估后适配"这类空话
+- **reasoning** 写成面向决策者的技术结论：串联关键证据、核心权衡、为何现在投入或不投入，以及最可能推翻结论的未知项。
+- **harmony_leverage 与 opportunities 一致性**:若所有交付形态只是 ohpm_package/docs_tooling，且没有鸿蒙专属 API/设备价值，
   harmony_leverage 通常不得超过 0.4；给到 0.6 以上时必须在 reasoning 中点名专属交付物。
 - **严格 JSON 合约**:只输出一个 JSON 对象，不加 Markdown；所有 schema 必填字段都要出现。
-  adaptation_points 最多 6 条，target_devices 最多 5 项，target_kits 最多 6 项；integration_form 只能从
+  opportunities 最多 5 条；integration_form 只能从
   ohpm_package / arkui_component / napi_module / platform_backend / sdk_plugin / app_feature / docs_tooling 中选一个。
-  不提新分类时 propose_new_category=false 且 new_category=null。不要输出额外字段。
-- **harmony_adapted_repo_url**:同状态判定纪律,只能取自给定信号`;
+  不提新分类时 propose_new_category=false 且 new_category=null。不要输出额外字段。`;
 
 function categoryRules(categoryList: string): string {
   return `## 分类体系(二级分类)
@@ -185,36 +193,30 @@ ${categoryList}
 5. **新子分类 slug 规范**:小写字母 + 下划线,2-30 个字符,如 state_machine, embedded_system`;
 }
 
-export interface SystemPromptOpts {
-  /** tier-2 注入的品类适配统计文本(来自 v_category_stats),用于锚定 ecosystem_gap */
-  categoryStats?: string | null;
-}
-
-export function systemPrompt(
-  tier: 1 | 2,
-  categoryTree: CategoryTreeNode[],
-  opts: SystemPromptOpts = {},
-): string {
+export function systemPrompt(tier: 1 | 2, categoryTree: CategoryTreeNode[]): string {
   const parts = [
-    `你是鸿蒙(HarmonyOS NEXT / OpenHarmony)生态适配分析专家。你要对一个 GitHub 开源项目完成三类判断:
-A. **适配状态判定**——事实题,只依据给定信号与 README 证据,不做推测
-B. **适配价值评估**——分析题,必须落到该项目的具体技术特征,拒绝对任何项目都成立的泛泛结论
-C. **项目中文简介**(project_summary_cn)——用 1-2 句中文说明这个项目是干什么的,面向不熟悉该仓库的读者。只依据 README/描述/代码事实,禁止编造功能,不要写鸿蒙适配建议
+    `你是鸿蒙(HarmonyOS NEXT / OpenHarmony)生态机会分析专家。你要对一个 GitHub 开源项目完成两类判断:
+A. **项目能力画像**——说明项目是什么、有什么可复用资产、是否真的需要鸿蒙专属平台集成
+B. **生态结合机会**——只保留项目资产 × 鸿蒙专属场景 × 未覆盖交付物三者同时成立的机会
 
-所有事实引用必须能在给定材料中找到出处;材料没有的信息就明说不知道,不要臆造。`,
-    STATE_RULES,
+project_summary_cn 用 1-2 句中文说明项目本身，不含鸿蒙适配建议。
+所有事实引用必须能在给定材料中找到出处；材料没有的信息就明说不知道。你可以充分推演技术路线与产品价值，
+但必须标注推断链和待验证项。空结果是有效答案，不要为了显得完整而制造结合点。`,
+    SUPPORT_CONTEXT_RULES,
     SCORE_RUBRIC_BASE,
   ];
 
   if (tier === 2) {
     parts.push(SCORE_RUBRIC_TIER2);
-    if (opts.categoryStats) {
-      parts.push(`## 品类适配现状(来自本平台数据库,ecosystem_gap 以此为准)
-
-各品类「已适配 / 总数」:
-${opts.categoryStats}`);
-    }
     parts.push(TIER2_OUTPUT_RULES);
+  } else {
+    parts.push(`## tier-1 输出纪律
+
+- 只做低成本筛选，不生成具体结合点或实施路线。
+- HIGH_VALUE 仅用于材料已显示明确鸿蒙专属平台插槽和强项目资产的少数项目。
+- 平台无关通用库、纯服务端/桌面专属项目通常应为 LOW_VALUE 或 NO_CLEAR_OPPORTUNITY。
+- 证据不足但可能有关联时用 INSUFFICIENT_EVIDENCE，不得用高分掩盖信息不足。
+- screening_reason 只说明进入或退出深评的原因。`);
   }
 
   parts.push(categoryRules(formatCategoryList(categoryTree)));
@@ -232,7 +234,18 @@ interface PromptRepo {
 
 /** 信号事实清单:标注可信度分级([强]/[中]/[弱]),并给出可核对的细节。 */
 function signalFacts(sig: CollectedSignals): string {
-  const lines: string[] = [];
+  const lines: string[] = [
+    `- 确定性支持现状:${sig.support_availability}`,
+    `- 来源:${sig.support_provenance};覆盖:${sig.support_coverage};置信度:${sig.support_confidence.toFixed(2)}`,
+  ];
+  if (sig.manual_override) {
+    lines.unshift(
+      `- [人工权威] 管理台状态:${sig.manual_override.state};备注:${sig.manual_override.note ?? '无'};标记时间:${sig.manual_override.marked_at}`,
+    );
+  }
+  if (sig.support_evidence.length) {
+    lines.push(`- 状态证据:${sig.support_evidence.map((item) => `${item.source}:${item.reference}`).join('、')}`);
+  }
 
   if (sig.ohpm_matched) {
     const pkgs = (sig.ohpm_packages ?? []).map((p) => p.pkg).join(', ');
@@ -358,6 +371,7 @@ export function buildUserPrompt(
   /** DeepWiki 代码事实;缺省表示本次未取数(与"未索引"不同,不额外惩罚 confidence) */
   facts?: DeepwikiFacts | null,
   tier: 1 | 2 = 2,
+  history?: HistoricalAnalysisReference[] | null,
 ): string {
   const meta = [
     `仓库:${repo.full_name}`,
@@ -372,7 +386,7 @@ export function buildUserPrompt(
     '## 项目元数据',
     meta,
     '',
-    '## 已知鸿蒙信号(事实,harmony_suggestion 须按判定规则与之一致)',
+    '## 已支持现状与鸿蒙信号(事实，只用于判断哪些范围尚未覆盖)',
     signalFacts(sig),
   ];
 
@@ -388,6 +402,17 @@ export function buildUserPrompt(
     parts.push('', '## README(已清洗截断)', readme);
   } else {
     parts.push('', '## README', '(无 README 可用,confidence 相应降低)');
+  }
+
+  if (tier === 2) {
+    parts.push(
+      '',
+      '## 相关项目历史分析（可复用先验，不是当前仓库证据）',
+      `以下内容来自同组织或技术栈相似项目。可复用架构模式、依赖经验、鸿蒙生态判断与实施教训，
+但不得把来源仓库的路径、支持状态或结论直接当成当前仓库事实。每条复用结论都必须在当前材料中重新核验；
+无法核验的内容只能写入 validation_questions。若采用历史结论，在 analysis_details.historical_reuse 中说明来源、适用边界和当前仓库证据。`,
+      formatHistoricalAnalysisContext(history),
+    );
   }
 
   parts.push('', '请按 schema 输出 JSON。');

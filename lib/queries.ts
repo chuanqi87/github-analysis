@@ -6,7 +6,13 @@ import type {
   EvidenceLevel,
   ScoreBreakdown,
   AdaptationPoint,
+  AnalysisDetails,
   ArchivedReason,
+  OpportunityVerdict,
+  SupportAvailability,
+  SupportCoverage,
+  SupportEvidence,
+  SupportProvenance,
 } from '@/lib/types';
 
 export interface BoardRow {
@@ -38,11 +44,22 @@ export interface BoardRow {
   feasibility: number | null;
   effort_estimate: number | null;
   ecosystem_gap: number | null;
+  harmony_leverage: number | null;
+  opportunity_verdict: OpportunityVerdict | null;
+  opportunity_score: number | null;
+  screening_reason: string | null;
+  confidence: number | null;
   adaptation_points: AdaptationPoint[] | null;
+  analysis_details: AnalysisDetails | null;
   recommended_approach: string | null;
   reasoning: string | null;
   project_summary_cn: string | null;
   auto_state_hint: HarmonyState | null;
+  support_availability: SupportAvailability | null;
+  support_provenance: SupportProvenance | null;
+  support_coverage: SupportCoverage | null;
+  support_confidence: number | null;
+  support_evidence: SupportEvidence[] | null;
   ohpm_matched: boolean | null;
   ohpm_packages: { pkg: string; repository: string | null }[] | null;
   has_oh_package: boolean | null;
@@ -81,6 +98,7 @@ export interface BoardFilters {
   keyword?: string;
   category?: string;  // slug
   effectiveState?: HarmonyState;
+  supportAvailability?: SupportAvailability;
   language?: string;
   reviewed?: boolean;
   excludeAdapted?: boolean;
@@ -107,9 +125,12 @@ export async function fetchBoard(
   if (filters.keyword) q = q.ilike('full_name', `%${filters.keyword}%`);
   if (filters.category) q = q.eq('category', filters.category);
   if (filters.effectiveState) q = q.eq('effective_state', filters.effectiveState);
+  if (filters.supportAvailability) q = q.eq('support_availability', filters.supportAvailability);
   if (filters.language) q = q.eq('primary_language', filters.language);
   if (typeof filters.reviewed === 'boolean') q = q.eq('reviewed', filters.reviewed);
-  if (filters.excludeAdapted) q = q.neq('effective_state', 'ADAPTED');
+  if (filters.excludeAdapted) {
+    q = q.neq('support_availability', 'USABLE').or('effective_state.neq.ADAPTED,effective_state.is.null');
+  }
   if (filters.analysisStatus === 'analyzed') q = q.not('analysis_tier', 'is', null);
   if (filters.analysisStatus === 'unanalyzed') q = q.is('analysis_tier', null);
 

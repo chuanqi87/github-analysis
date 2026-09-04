@@ -53,6 +53,11 @@ export function buildEvidenceSnapshot(
       in_registry: signals.in_registry,
       gitcode_matched: signals.gitcode_matched,
       keyword_score: signals.keyword_score,
+      support_availability: signals.support_availability,
+      support_provenance: signals.support_provenance,
+      support_coverage: signals.support_coverage,
+      support_confidence: signals.support_confidence,
+      manual_override: signals.manual_override ?? null,
     },
     deepwiki: {
       indexed: facts?.indexed ?? false,

@@ -20,7 +20,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
-      DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen-plus' }}
+      DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen3.8-max' }}
+      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT || 'xhigh' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -6,23 +6,32 @@
 // 未被 DeepWiki 索引的仓库在这里会被跳过并列出,交给 scripts/agent/ 的兜底路径。
 import 'dotenv/config';
 import { collectDeepwiki, deepEvidenceCoverage, QUESTION_VERSION, type DeepwikiFacts } from '@/lib/deepwiki';
-import { deepEvaluateRepo, deepEvaluateInputHash, DEEP_PROMPT_VERSION } from '@/lib/llm/deep-evaluate';
+import {
+  deepEvaluateRepo,
+  deepEvaluateInputHash,
+  DEEP_PROMPT_VERSION,
+  type OpportunityEvaluationSeed,
+} from '@/lib/llm/deep-evaluate';
 import type { AnalyzeRepo } from '@/lib/llm/classify';
 import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
 import { loadCategoryTree } from '@/lib/category/loader';
 import { getAdminClient, upsertBatched } from '@/lib/supabase/admin';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor } from '@/scripts/_data';
 import { refreshAnalysisQueue, selectTier3Candidates } from '@/lib/pipeline/candidates';
 import { EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
 import { stableHash } from '@/lib/hash';
+import { PROMPT_VERSION } from '@/lib/llm/prompts';
+import { scoreRepositoryOpportunities } from '@/lib/scoring/opportunity';
 import {
   buildEvidenceSnapshot,
   captureAnalysisExecution,
   flushAnalysisExecutionLogs,
   type AnalysisExecutionRow,
 } from '@/lib/pipeline/analysis-log';
+import { loadHistoricalAnalysisContexts } from '@/lib/llm/history-context';
 
 /** tier-3 成本比 tier-2 高(7 问 + 强模型),默认只做 top-30。 */
 const DEFAULT_LIMIT = 30;
@@ -107,9 +116,38 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
   return map;
 }
 
+async function loadTier2OpportunitySeeds(ids: number[]): Promise<Map<number, OpportunityEvaluationSeed>> {
+  const client = getAdminClient();
+  const result = new Map<number, OpportunityEvaluationSeed>();
+  for (let offset = 0; offset < ids.length; offset += 800) {
+    const { data, error } = await client
+      .from('analysis')
+      .select('repository_id,opportunity_verdict,adaptation_points,recommended_approach')
+      .eq('tier', 2)
+      .eq('prompt_version', PROMPT_VERSION)
+      .eq('model', EVALUATE_MODEL_NAME)
+      .in('repository_id', ids.slice(offset, offset + 800));
+    if (error) throw new Error(`加载 tier-2 结合机会失败:${error.message}`);
+    for (const row of (data ?? []) as Array<{
+      repository_id: number;
+      opportunity_verdict: OpportunityEvaluationSeed['opportunity_verdict'];
+      adaptation_points: OpportunityEvaluationSeed['opportunities'] | null;
+      recommended_approach: string | null;
+    }>) {
+      result.set(row.repository_id, {
+        opportunity_verdict: row.opportunity_verdict,
+        opportunities: row.adaptation_points ?? [],
+        recommended_approach: row.recommended_approach,
+      });
+    }
+  }
+  return result;
+}
+
 export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('deepwiki-deep');
   try {
+    await assertAnalysisSchema();
     const limit = opts.limit ?? DEFAULT_LIMIT;
     if (!opts.ids?.length) await refreshAnalysisQueue();
     // 多取一倍后备候选：未索引、证据不足或模型失败时继续向后补，尽量兑现每日配额。
@@ -122,7 +160,15 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
     const ids = candidates.map((r) => r.id);
     const signals = await loadSignalsMap(ids);
     const existing = opts.force ? new Map<number, string>() : await loadExistingHashes(ids);
+    const tier2Seeds = await loadTier2OpportunitySeeds(ids);
     const deepwikiCache = await loadDeepwikiCacheState(ids);
+    const historyContexts = await loadHistoricalAnalysisContexts(candidates.map((repo) => ({
+      id: repo.id,
+      owner: repo.owner,
+      full_name: repo.full_name,
+      primary_language: repo.primary_language,
+      topics: repo.topics,
+    })));
 
     const adminClient = getAdminClient();
     const categoryTree = await loadCategoryTree(adminClient);
@@ -150,6 +196,8 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
           stars: repo.stars,
           license: repo.license,
         };
+        const priorEvaluation = tier2Seeds.get(repo.id) ?? null;
+        const history = historyContexts.get(repo.id) ?? [];
 
         try {
           // 深度档:7 问并发,约 15s
@@ -209,7 +257,7 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             return;
           }
 
-          const hash = deepEvaluateInputHash(analyzeRepo, sig, repo.readme_text, facts);
+          const hash = deepEvaluateInputHash(analyzeRepo, sig, repo.readme_text, facts, priorEvaluation, history);
           if (existing.get(repo.id) === hash) {
             skipped++;
             executionRows.push(captureAnalysisExecution({
@@ -233,10 +281,13 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             repo.readme_text,
             categoryTree,
             facts,
+            priorEvaluation,
+            history,
           );
 
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);
           if (resolved.created_new) newCategories++;
+          const opportunityScore = scoreRepositoryOpportunities(out.data.opportunities);
 
           rows.push({
             repository_id: repo.id,
@@ -248,17 +299,19 @@ export async function runDeepwikiDeep(opts: StageOpts = {}): Promise<void> {
             subcategory_id: resolved.subcategory_id,
             category: resolved.category_enum,
             subcategory: out.data.subcategory || '',
-            harmony_suggestion: out.data.harmony_suggestion,
-            mobile_relevance: out.data.mobile_relevance,
+            harmony_suggestion: null,
+            mobile_relevance: out.data.client_relevance,
             feasibility: out.data.feasibility,
             effort_estimate: out.data.effort_estimate,
             ecosystem_gap: out.data.ecosystem_gap,
             harmony_leverage: out.data.harmony_leverage,
-            adaptation_points: out.data.adaptation_points,
+            opportunity_verdict: out.data.opportunity_verdict,
+            opportunity_score: opportunityScore,
+            adaptation_points: out.data.opportunities,
+            analysis_details: out.data.analysis_details,
             recommended_approach: out.data.recommended_approach,
             reasoning: out.data.reasoning,
             project_summary_cn: out.data.project_summary_cn,
-            harmony_adapted_repo_url: out.data.harmony_adapted_repo_url,
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,

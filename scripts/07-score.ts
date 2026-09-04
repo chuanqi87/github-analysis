@@ -1,4 +1,4 @@
-// 阶段7:合并人工标记(权威)与信号/分析,计算适配优先级并排名。
+// 阶段7:按最佳可信结合机会计算生态价值优先级；旧分析在回填期间走兼容公式。
 // 已归档仓库不参与排名计算。
 // v3: 支持动态分类,通过 repo_board 视图获取分类 slug。
 import 'dotenv/config';
@@ -14,6 +14,8 @@ interface BestAnalysis {
   feasibility: number | null;
   effort_estimate: number | null;
   ecosystem_gap: number | null;
+  opportunity_score: number | null;
+  confidence: number | null;
 }
 
 async function pageAll<T>(
@@ -44,10 +46,12 @@ async function loadBestAnalysis(): Promise<Map<number, BestAnalysis>> {
     feasibility: number | null;
     effort_estimate: number | null;
     ecosystem_gap: number | null;
+    opportunity_score: number | null;
+    confidence: number | null;
   }>((from, to) =>
     client
       .from('repo_board')
-      .select('id, category, mobile_relevance, feasibility, effort_estimate, ecosystem_gap')
+      .select('id, category, mobile_relevance, feasibility, effort_estimate, ecosystem_gap, opportunity_score, confidence')
       .range(from, to),
   );
   const map = new Map<number, BestAnalysis>();
@@ -58,6 +62,8 @@ async function loadBestAnalysis(): Promise<Map<number, BestAnalysis>> {
       feasibility: r.feasibility,
       effort_estimate: r.effort_estimate,
       ecosystem_gap: r.ecosystem_gap,
+      opportunity_score: r.opportunity_score,
+      confidence: r.confidence,
     });
   }
   return map;
@@ -147,6 +153,8 @@ export async function runScore(opts: StageOpts = {}): Promise<void> {
         effortEstimate: a?.effort_estimate ?? null,
         ecosystemGap: a?.ecosystem_gap ?? null,
         feasibility: a?.feasibility ?? null,
+        opportunityScore: a?.opportunity_score ?? null,
+        confidence: a?.confidence ?? null,
       });
       return { repository_id: repo.id, breakdown };
     });

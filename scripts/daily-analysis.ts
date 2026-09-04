@@ -28,6 +28,7 @@ import { runScore } from '@/scripts/07-score';
 import { runDeepwiki } from '@/scripts/09-deepwiki';
 import { runDeepwikiDeep } from '@/scripts/10-deepwiki-deep';
 import { runWeeklyTrending } from '@/scripts/weekly-trending';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 
 const DEFAULT_PRELIMINARY_LIMIT = 400;
 const DEFAULT_DEEP_LIMIT = 100;
@@ -127,6 +128,7 @@ export async function runDailyAnalysis(opts: StageOpts = {}): Promise<void> {
   const deepLimit = opts.deepLimit ?? DEFAULT_DEEP_LIMIT;
   const tier3Limit = opts.tier3Limit ?? DEFAULT_TIER3_LIMIT;
   try {
+    await assertAnalysisSchema();
     const sessionId = getPipelineSessionId();
     log(`每日分层分析预算:初筛 ${preliminaryLimit}、深评 ${deepLimit}、代码深析 ${tier3Limit}`);
     log(`执行 session:${sessionId}`);

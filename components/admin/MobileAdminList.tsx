@@ -9,6 +9,8 @@ import ArchivedTag from '@/components/ArchivedTag';
 import SignalTags from './SignalTags';
 import { buildAdminFilters, type AnalysisFilter } from './filters';
 import ProjectIntro from '@/components/ProjectIntro';
+import SupportStatusBadge from '@/components/SupportStatusBadge';
+import OpportunityBadge from '@/components/OpportunityBadge';
 
 function AdminCard({ row, onMark }: { row: BoardRow; onMark: (r: BoardRow) => void }) {
   const categoryName = row.category_name || row.category;
@@ -46,7 +48,8 @@ function AdminCard({ row, onMark }: { row: BoardRow; onMark: (r: BoardRow) => vo
         </div>
         <Flex align="center" justify="space-between" style={{ marginTop: 8 }}>
           <Space size={6} wrap>
-            {row.harmony_suggestion && <HarmonyBadge state={row.harmony_suggestion} />}
+            <SupportStatusBadge availability={row.support_availability} provenance={row.support_provenance} confidence={row.support_confidence} />
+            <OpportunityBadge verdict={row.opportunity_verdict} />
             {row.override_state ? (
               <HarmonyBadge state={row.override_state} reviewed />
             ) : (

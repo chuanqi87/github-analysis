@@ -10,7 +10,7 @@
 
 import type { HarmonyState, ScoreBreakdown } from '@/lib/types';
 
-export const WEIGHTS_VERSION = 'v1';
+export const WEIGHTS_VERSION = 'v2-opportunity';
 
 const WEIGHTS = {
   popularity: 0.28,
@@ -114,6 +114,9 @@ export interface ScoreInput {
   ecosystemGap?: number | null;
   /** 可行性 0-1 */
   feasibility?: number | null;
+  /** 新分析模型产出的最佳可信结合机会分(0-100)。 */
+  opportunityScore?: number | null;
+  confidence?: number | null;
 }
 
 export function computePriority(input: ScoreInput): ScoreBreakdown {
@@ -137,7 +140,14 @@ export function computePriority(input: ScoreInput): ScoreBreakdown {
     WEIGHTS.effortInv * effortInv +
     WEIGHTS.ecosystemGap * ecosystemGap;
 
-  const priorityScore = 100 * feasibility * gate * weighted;
+  const opportunityScore = Math.max(0, Math.min(100, input.opportunityScore ?? 0));
+  const impactFactor = 0.7 + 0.3 * (0.75 * popularity + 0.25 * velocity);
+  const confidenceFactor = 0.85 + 0.15 * clamp01(input.confidence ?? 0.5);
+  // 新版结果已经逐条扣除了已覆盖范围，不能再用仓库整体“已适配”状态归零。
+  // 旧分析没有机会分时继续走兼容公式，直到 p11 回填完成。
+  const priorityScore = input.opportunityScore == null
+    ? 100 * feasibility * gate * weighted
+    : opportunityScore * impactFactor * confidenceFactor;
 
   return {
     popularity,
@@ -150,5 +160,8 @@ export function computePriority(input: ScoreInput): ScoreBreakdown {
     adaptedGate: gate,
     priorityScore: Math.round(priorityScore * 100) / 100,
     weightsVersion: WEIGHTS_VERSION,
+    opportunityScore,
+    impactFactor,
+    confidenceFactor,
   };
 }

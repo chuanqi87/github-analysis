@@ -1,6 +1,6 @@
 # 鸿蒙生态适配分析看板
 
-分析 GitHub 上 **Star ≥ 10000** 的基线项目以及**多源日榜/周榜热点项目**,通过持久候选池完成“发现 → 初筛 → 高价值深评 → 代码级深析 → 热点持续监控”。每个深评项目会明确输出“项目可复用资产 × 鸿蒙生态价值 × 目标设备 × 官方 Kit/API × 交付形态 × 代码证据”。鸿蒙化状态由管理台人工审核标记,自动信号仅作辅助。
+分析 GitHub 上 **Star ≥ 10000** 的基线项目以及**多源日榜/周榜热点项目**,通过持久候选池完成“发现 → 初筛 → 结合机会生成 → 代码级反证 → 热点持续监控”。系统把“已有鸿蒙支持事实”和“未来生态结合机会”分成两条轨道；结合机会允许为空，只把有项目资产、鸿蒙专属价值、未覆盖范围和代码证据的少量项目推到榜首。人工审核仍是支持状态的最终权威。
 
 ## 架构:完全 GitHub 闭环 + Supabase 后端
 
@@ -23,12 +23,12 @@ baseline + 4-source trending  ──▶  analysis_queue 候选池      ◀──
 
 ### 1. Supabase 项目
 1. 在 [supabase.com](https://supabase.com) 新建免费项目。
-2. 打开 SQL Editor,依次执行 `supabase/migrations/0001_init.sql`、`0002_views.sql`(或用 CLI:`supabase link` 后 `supabase db push`)。
+2. 新库在 SQL Editor 按文件名顺序执行 `supabase/migrations/` 中的全部迁移；已有数据库升级时只补执行尚未应用的迁移。代码推送和 GitHub Pages 部署不会自动更新数据库结构。
 3. **Auth**:创建一个管理员账户(Authentication → Users → Add user,设邮箱+密码);并在 Auth 设置中**关闭公开注册**(Providers → Email → 关掉 "Enable sign ups"),确保只有你能登录写标记。
 4. 记下 Project URL、anon key(Settings → API)、service_role key(仅用于 Actions)。
 
 ### 2. 百炼 API Key
-在 [百炼控制台](https://bailian.console.aliyun.com) 获取 API Key(`DASHSCOPE_API_KEY`)。默认模型 `qwen-plus`(粗分类)/ `qwen-max`(深评),可改。
+在 [百炼控制台](https://bailian.console.aliyun.com) 获取 API Key(`DASHSCOPE_API_KEY`)。CI 与本地默认模型均为 `qwen3.8-max`，并保留其推理能力；可用 `DASHSCOPE_MODEL` / `DASHSCOPE_MODEL_DEEP` 分别覆盖。CI 默认 `DASHSCOPE_REASONING_EFFORT=xhigh` 保障深析质量，也可通过同名 Actions Variable 调低；本地留空时使用模型默认值。
 
 ### 3. GitHub PAT(可选,提升抓取配额)
 细粒度或经典 PAT(只读 public 即可)。不配则用 Actions 默认 token。
@@ -59,6 +59,7 @@ pnpm install
 pnpm dev            # http://localhost:3000
 
 # 管道(需 .env 的 SUPABASE_* 与 DASHSCOPE_API_KEY)
+pnpm db:check                                  # 只读校验中文简介字段及看板视图，不调用 LLM
 pnpm pipeline --stage=build-registry            # 验证鸿蒙底表解析
 pnpm pipeline --stage=all --limit=500           # MVP 切片:全流程 top 500
 pnpm pipeline --stage=llm-classify --force      # 单阶段 / 强制重算
@@ -70,6 +71,10 @@ pnpm audit:session <session_id>                   # 复盘逐项目 Prompt/输�
 ```
 
 推荐使用 `--stage=daily`。它先完成基线与热点发现，再从 `analysis_queue` 选取尚未完成当前层级的项目；已分析项目不会占住每日名额。默认预算为 tier-1 初筛 400、tier-2 深评 100、tier-3 代码深析 20，可分别用 `--preliminary-limit`、`--deep-limit`、`--tier3-limit` 调整。积压清空后，只有仍处热点且代码有变化的项目会重新入池。
+
+`daily` / `all` 在取数前，以及各 LLM 阶段在模型调用前，会通过 Data API 校验支持现状与生态机会字段。缺少字段时会立即停止并提示 `20260904062704_support_and_opportunities.sql`；补执行迁移后刷新 PostgREST schema cache，再运行 `pnpm db:check` 确认。此检查不自动执行迁移，也不替代完整的迁移版本管理。
+
+新的 tier-1 只做能力画像和价值初筛；tier-2 先完成架构、平台边界、依赖阻塞、生态替代与决策条件等技术尽调，再生成最多 5 个结合机会，也可以明确输出“未发现明确机会”；tier-3 会读取同组织/相似项目的历史分析作为先验，并用当前仓库代码重新核验，既能淘汰弱机会，也能补充深层代码暴露的漏项。总榜按最佳可信机会计分，第二机会只提供少量加成，Star 与热点只作温和影响力修正。
 
 旧全量管道仍可用:`fetch-top → enrich → build-registry → deepwiki → harmony-signals → fetch-readme → mark-archived → llm-classify → llm-evaluate → score`。`--ids=1,2` 仅处理指定仓库;`--force` 忽略幂等重算。
 

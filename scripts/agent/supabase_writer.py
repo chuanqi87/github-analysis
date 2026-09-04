@@ -3,6 +3,7 @@ Supabase 写入模块 —— 将 Agent 分析结果持久化到数据库。
 """
 
 import json
+import hashlib
 import os
 from datetime import datetime
 from typing import Optional
@@ -43,8 +44,8 @@ def write_tier3_analysis(
     owner: str,
     name: str,
     analysis: dict,
-    model: str = "qwen3-max",
-    prompt_version: str = "agent-v1",
+    model: str = "qwen3.8-max",
+    prompt_version: str = "p11-agent-v3",
 ) -> dict:
     """
     将 Agent 的深度分析结果写入 analysis 表（tier=3）。
@@ -67,25 +68,45 @@ def write_tier3_analysis(
     if not repo_id:
         return {"status": "error", "reason": f"未找到仓库 {owner}/{name}"}
     
-    # 构建 adaptation_points（包含 evidence）
-    adaptation_points = analysis.get("adaptation_points", [])
+    # 只保留具备项目资产、未覆盖范围和真实证据的结合机会。
+    adaptation_points = analysis.get("opportunities", [])
     ap_rows = []
-    for ap in adaptation_points[:8]:  # 最多 8 个
+    for ap in adaptation_points[:5]:
+        if not (ap.get("project_assets") and ap.get("uncovered_scope") and ap.get("evidence_refs")):
+            continue
         ap_rows.append({
             "area": ap.get("area", ""),
             "description": ap.get("description", ""),
             "difficulty": ap.get("difficulty", "medium"),
-            "evidence": ap.get("evidence", ""),
+            "harmony_value": ap.get("harmony_value", ""),
+            "project_assets": ap.get("project_assets", ""),
+            "uncovered_scope": ap.get("uncovered_scope", ""),
+            "implementation_outline": ap.get("implementation_outline", ""),
+            "target_devices": ap.get("target_devices", []),
+            "target_kits": ap.get("target_kits", []),
+            "integration_form": ap.get("integration_form", "app_feature"),
+            "ecosystem_need": ap.get("ecosystem_need", 0),
+            "project_advantage": ap.get("project_advantage", 0),
+            "user_reach": ap.get("user_reach", 0),
+            "upstream_fit": ap.get("upstream_fit", 0),
+            "confidence": ap.get("confidence", 0),
+            "evidence_refs": ap.get("evidence_refs", []),
+            "validation_questions": ap.get("validation_questions", []),
         })
-    
-    # 映射 harmony_suggestion
-    harmony_map = {
-        "ADAPTED": "ADAPTED",
-        "PARTIAL": "PARTIAL", 
-        "NOT_ADAPTED": "NOT_ADAPTED",
-        "NOT_APPLICABLE": "NOT_APPLICABLE",
-    }
-    harmony = harmony_map.get(analysis.get("harmony_suggestion", "NOT_ADAPTED"), "NOT_ADAPTED")
+
+    difficulty_factor = {"low": 1.0, "medium": 0.9, "high": 0.78}
+    point_scores = []
+    for ap in ap_rows:
+        strategic = (
+            0.35 * float(ap["ecosystem_need"]) +
+            0.25 * float(ap["project_advantage"]) +
+            0.2 * float(ap["user_reach"]) +
+            0.2 * float(ap["upstream_fit"])
+        )
+        point_scores.append(100 * strategic * float(ap["confidence"]) * difficulty_factor.get(ap["difficulty"], 0.9))
+    point_scores.sort(reverse=True)
+    opportunity_score = min(100, (point_scores[0] if point_scores else 0) + 0.1 * (point_scores[1] if len(point_scores) > 1 else 0))
+    verdict = analysis.get("opportunity_verdict", "NO_CLEAR_OPPORTUNITY") if ap_rows else "NO_CLEAR_OPPORTUNITY"
     
     # 构建写入数据
     row = {
@@ -93,18 +114,23 @@ def write_tier3_analysis(
         "tier": 3,
         "model": model,
         "prompt_version": prompt_version,
-        "input_hash": f"agent-{owner}-{name}-{datetime.utcnow().isoformat()}",
+        "input_hash": hashlib.sha256(json.dumps(analysis, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
         # 基础字段
         "category": _map_category(analysis.get("category", "")),
         "subcategory": analysis.get("subcategory", ""),
-        "harmony_suggestion": harmony,
-        "mobile_relevance": analysis.get("mobile_relevance", 0),
+        "harmony_suggestion": None,
+        "mobile_relevance": analysis.get("client_relevance", 0),
         "feasibility": analysis.get("feasibility", 0),
         "effort_estimate": analysis.get("effort_estimate", 0),
         "ecosystem_gap": analysis.get("ecosystem_gap", 0),
+        "harmony_leverage": analysis.get("harmony_leverage", 0),
+        "opportunity_verdict": verdict,
+        "opportunity_score": round(opportunity_score, 2),
         "adaptation_points": ap_rows,
-        "recommended_approach": analysis.get("recommended_approach", ""),
+        "analysis_details": analysis.get("analysis_details"),
+        "recommended_approach": analysis.get("recommended_approach") if ap_rows else None,
         "reasoning": analysis.get("reasoning", ""),
+        "project_summary_cn": analysis.get("project_summary_cn"),
         "confidence": analysis.get("confidence", 0),
         "analyzed_at": datetime.utcnow().isoformat(),
         # Tier-3 专有字段
@@ -164,7 +190,7 @@ def _map_category(cat: str) -> str:
     return mapping.get(cat, "OTHER")
 
 
-def batch_write(results: list[dict], model: str = "qwen3-max") -> list[dict]:
+def batch_write(results: list[dict], model: str = "qwen3.8-max") -> list[dict]:
     """批量写入分析结果。"""
     statuses = []
     for r in results:

@@ -13,6 +13,7 @@
     "pipeline": "tsx scripts/pipeline.ts",
     "audit:session": "tsx scripts/audit-analysis-session.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:check": "tsx scripts/check-schema.ts",
     "check": "tsx scripts/check-config.ts",
     "gen:types": "supabase gen types typescript --local > lib/supabase/database.types.ts"
   },

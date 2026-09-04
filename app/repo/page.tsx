@@ -24,7 +24,11 @@ import {
 import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
-import { ARCHIVED_REASON_LABELS, type ArchivedReason } from '@/lib/types';
+import {
+  ARCHIVED_REASON_LABELS,
+  SUPPORT_PROVENANCE_LABELS,
+  type ArchivedReason,
+} from '@/lib/types';
 import { fetchRepoByFullName, type BoardRow } from '@/lib/queries';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { triggerGitHubWorkflow } from '@/lib/github/actions';
@@ -36,6 +40,9 @@ import DeepwikiFacts from '@/components/DeepwikiFacts';
 import EvidenceBadge from '@/components/EvidenceBadge';
 import ProjectIntro from '@/components/ProjectIntro';
 import { useIsMobile } from '@/lib/hooks/use-is-mobile';
+import SupportStatusBadge from '@/components/SupportStatusBadge';
+import OpportunityBadge from '@/components/OpportunityBadge';
+import AnalysisDetailsView from '@/components/AnalysisDetailsView';
 
 const DIFF_COLOR: Record<string, string> = { low: 'green', medium: 'gold', high: 'red' };
 
@@ -129,7 +136,13 @@ function RepoDetail() {
                   {row.full_name}
                 </a>
               </Typography.Title>
-              <HarmonyBadge state={row.effective_state} reviewed={row.reviewed} />
+              <SupportStatusBadge
+                availability={row.support_availability}
+                provenance={row.support_provenance}
+                confidence={row.support_confidence}
+              />
+              {row.reviewed && <HarmonyBadge state={row.effective_state} reviewed />}
+              <OpportunityBadge verdict={row.opportunity_verdict} />
               <EvidenceBadge level={row.evidence_level} />
               {row.is_archived && (
                 <Tooltip title={archivedReason}>
@@ -190,7 +203,20 @@ function RepoDetail() {
 
       <Row gutter={[8, 8]}>
         <Col xs={24} md={12}>
-          <Card title="鸿蒙化信号(辅助人工审核)" size="small">
+          <Card title="已支持事实" size="small">
+            <Descriptions column={1} size="small" style={{ marginBottom: 12 }}>
+              <Descriptions.Item label="支持现状">
+                <SupportStatusBadge
+                  availability={row.support_availability}
+                  provenance={row.support_provenance}
+                  confidence={row.support_confidence}
+                />
+              </Descriptions.Item>
+              <Descriptions.Item label="来源">
+                {row.support_provenance ? SUPPORT_PROVENANCE_LABELS[row.support_provenance] : '未知'}
+              </Descriptions.Item>
+              <Descriptions.Item label="覆盖范围">{row.support_coverage ?? 'UNKNOWN'}</Descriptions.Item>
+            </Descriptions>
             <Space size={6} wrap>
               <Tag color={row.ohpm_matched ? 'green' : 'default'}>
                 ohpm 中心仓 {row.ohpm_matched ? '命中' : '未命中'}
@@ -217,7 +243,7 @@ function RepoDetail() {
           </Card>
         </Col>
         <Col xs={24} md={12}>
-          <Card title="适配优先级构成" size="small">
+          <Card title="生态机会优先级构成" size="small">
             {b ? (
               <Descriptions column={1} size="small">
                 <BreakdownItem label="热度 popularity" value={b.popularity} />
@@ -225,12 +251,17 @@ function RepoDetail() {
                 <BreakdownItem label="移动相关 mobileRelevance" value={b.mobileRelevance} />
                 <BreakdownItem label="工作量逆 effortInv" value={b.effortInv} />
                 <BreakdownItem label="生态缺口 ecosystemGap" value={b.ecosystemGap} />
+                {b.opportunityScore != null && (
+                  <Descriptions.Item label="最佳结合机会">
+                    {b.opportunityScore.toFixed(1)}
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="可行性乘子 feasibility">
                   {b.feasibility.toFixed(2)}
                 </Descriptions.Item>
-                <Descriptions.Item label="适配门控 adaptedGate">
-                  {b.adaptedGate.toFixed(2)}
-                </Descriptions.Item>
+                {b.impactFactor != null && (
+                  <Descriptions.Item label="影响力修正">{b.impactFactor.toFixed(2)}</Descriptions.Item>
+                )}
                 <Descriptions.Item label="最终优先级">
                   <Typography.Text strong>{b.priorityScore.toFixed(1)}</Typography.Text>
                 </Descriptions.Item>
@@ -242,17 +273,23 @@ function RepoDetail() {
         </Col>
       </Row>
 
-      <Card title="LLM 适配评估" size="small">
+      <Card title="LLM 鸿蒙生态结合机会" size="small">
         {row.analysis_tier ? (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
             <Descriptions column={{ xs: 1, sm: 1, md: 2 }} size="small">
+              <Descriptions.Item label="机会结论">
+                <OpportunityBadge verdict={row.opportunity_verdict} />
+              </Descriptions.Item>
+              <Descriptions.Item label="机会原始分">
+                {row.opportunity_score == null ? '-' : row.opportunity_score.toFixed(1)}
+              </Descriptions.Item>
               <Descriptions.Item label="推荐路径">
                 {row.recommended_approach ?? '-'}
               </Descriptions.Item>
               <Descriptions.Item label="分析层级">
                 {row.analysis_tier === 3 ? '代码深析' : row.analysis_tier === 2 ? '深度评估' : '粗分类'}
               </Descriptions.Item>
-              <Descriptions.Item label="移动相关度">{pct(row.mobile_relevance)}%</Descriptions.Item>
+              <Descriptions.Item label="终端相关度">{pct(row.mobile_relevance)}%</Descriptions.Item>
               <Descriptions.Item label="可行性">{pct(row.feasibility)}%</Descriptions.Item>
               <Descriptions.Item label="工作量(越高越难)">
                 {pct(row.effort_estimate)}%
@@ -262,7 +299,7 @@ function RepoDetail() {
 
             {row.adaptation_points?.length ? (
               <List
-                header={<Typography.Text strong>适配点</Typography.Text>}
+                header={<Typography.Text strong>可信结合机会</Typography.Text>}
                 size="small"
                 dataSource={row.adaptation_points}
                 renderItem={(p) => (
@@ -278,6 +315,16 @@ function RepoDetail() {
                             <Typography.Text strong>鸿蒙契合：</Typography.Text>{p.harmony_value}
                           </Typography.Paragraph>
                         )}
+                        {p.uncovered_scope && (
+                          <Typography.Paragraph style={{ margin: '4px 0 0' }}>
+                            <Typography.Text strong>未覆盖范围：</Typography.Text>{p.uncovered_scope}
+                          </Typography.Paragraph>
+                        )}
+                        {p.implementation_outline && (
+                          <Typography.Paragraph style={{ margin: '4px 0 0' }}>
+                            <Typography.Text strong>实施轮廓：</Typography.Text>{p.implementation_outline}
+                          </Typography.Paragraph>
+                        )}
                         <Space size={[4, 4]} wrap>
                           {p.integration_form && <Tag color="blue">{p.integration_form}</Tag>}
                           {p.target_devices?.map((device) => <Tag key={device}>{device}</Tag>)}
@@ -288,7 +335,15 @@ function RepoDetail() {
                   </List.Item>
                 )}
               />
-            ) : null}
+            ) : (
+              <Empty description={
+                row.opportunity_verdict === 'INSUFFICIENT_EVIDENCE'
+                  ? '当前证据不足，暂不生成结合点'
+                  : '未发现通过证据门槛的鸿蒙生态结合机会'
+              } />
+            )}
+
+            <AnalysisDetailsView details={row.analysis_details} />
 
             {row.reasoning && (
               <Card size="small" type="inner" title="评估理由">

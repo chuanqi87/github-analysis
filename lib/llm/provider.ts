@@ -3,16 +3,29 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';
 
-export const CLASSIFY_MODEL_NAME = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
-export const EVALUATE_MODEL_NAME = process.env.DASHSCOPE_MODEL_DEEP ?? 'qwen-max';
+export const CLASSIFY_MODEL_NAME = process.env.DASHSCOPE_MODEL ?? 'qwen3.8-max';
+export const EVALUATE_MODEL_NAME = process.env.DASHSCOPE_MODEL_DEEP ?? 'qwen3.8-max';
 
-// qwen3.x 为思考模型:开启 thinking 时(1)不支持 tool_choice;(2)JSON 输出约 1/3 概率不合 schema;
-// (3)推理 token 拖慢速度。注入 enable_thinking:false → 干净直出 JSON、更快、更稳。
-const disableThinkingFetch: typeof fetch = async (input, init) => {
+export function applyDashscopeModelOptions(
+  body: Record<string, unknown>,
+  reasoningEffort = process.env.DASHSCOPE_REASONING_EFFORT,
+): Record<string, unknown> {
+  const next = { ...body };
+  if (/^qwen3\.8(?:-|$)/i.test(String(next.model ?? ''))) {
+    next.enable_thinking = true;
+    if (reasoningEffort) next.reasoning_effort = reasoningEffort;
+  } else {
+    next.enable_thinking = false;
+  }
+  return next;
+}
+
+// qwen3.8-max 的优势来自强制思考能力，不能沿用旧模型统一关闭 thinking 的策略。
+// 其他旧 Qwen 仍默认关闭 thinking，以保持已有 JSON 管道兼容性。
+const dashscopeFetch: typeof fetch = async (input, init) => {
   if (init?.body && typeof init.body === 'string') {
     try {
-      const body = JSON.parse(init.body);
-      body.enable_thinking = false;
+      const body = applyDashscopeModelOptions(JSON.parse(init.body));
       init = { ...init, body: JSON.stringify(body) };
     } catch {
       /* 非 JSON body,原样透传 */
@@ -29,7 +42,7 @@ function getProvider() {
   return createOpenAI({
     apiKey,
     baseURL: process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    fetch: disableThinkingFetch,
+    fetch: dashscopeFetch,
   });
 }
 

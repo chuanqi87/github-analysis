@@ -43,6 +43,10 @@ function signalFingerprint(sig: CollectedSignals) {
     ets: sig.has_ets,
     reg: sig.in_registry,
     kw: Math.round(sig.keyword_score * 4),
+    support: [sig.support_availability, sig.support_provenance, sig.support_coverage],
+    override: sig.manual_override
+      ? [sig.manual_override.state, sig.manual_override.note, sig.manual_override.marked_at]
+      : null,
   };
 }
 
@@ -83,7 +87,7 @@ export async function classifyRepo(
         generateObject({
           model: classifyModel(),
           schema: classifySchema,
-          // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
+          // qwen3.8-max 支持 JSON 结构化输出；不用工具调用，避免把 schema 当函数工具。
           mode: 'json',
           system,
           prompt,

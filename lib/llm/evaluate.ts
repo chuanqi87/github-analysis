@@ -1,4 +1,4 @@
-// tier-2 深度评估:候选项目,更强模型 + README,产出适配点与推荐路径。
+// tier-2 深度评估:候选项目,更强模型 + README,产出 0-3 个可反证的生态结合机会。
 import { generateObject } from 'ai';
 import { evaluateModel, EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
 import { evaluateSchema, type EvaluateResult } from '@/lib/llm/schema';
@@ -15,6 +15,29 @@ import { deepwikiFingerprint, type DeepwikiFacts } from '@/lib/deepwiki';
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { AnalyzeRepo, LlmOutput } from '@/lib/llm/classify';
 import type { CategoryTreeNode } from '@/lib/types';
+import { isConcreteOpportunity, scoreRepositoryOpportunities, verdictFromOpportunityScore } from '@/lib/scoring/opportunity';
+import {
+  historicalContextFingerprint,
+  type HistoricalAnalysisReference,
+} from '@/lib/llm/history-context';
+
+export function normalizeEvaluateResult(
+  result: EvaluateResult,
+  hasCodeEvidence: boolean,
+): EvaluateResult {
+  const opportunities = result.opportunities.filter(isConcreteOpportunity);
+  const opportunityScore = scoreRepositoryOpportunities(opportunities);
+  return {
+    ...result,
+    opportunities,
+    opportunity_verdict: verdictFromOpportunityScore(opportunityScore, hasCodeEvidence),
+    recommended_approach: opportunities.length ? result.recommended_approach : null,
+    ecosystem_gap: opportunities.length ? Math.max(...opportunities.map((point) => point.ecosystem_need)) : 0,
+    harmony_leverage: opportunities.length
+      ? Math.max(...opportunities.map((point) => (point.project_advantage + point.user_reach) / 2))
+      : 0,
+  };
+}
 
 function signalFingerprint(sig: CollectedSignals) {
   return {
@@ -24,6 +47,10 @@ function signalFingerprint(sig: CollectedSignals) {
     ets: sig.has_ets,
     reg: sig.in_registry,
     kw: Math.round(sig.keyword_score * 4),
+    support: [sig.support_availability, sig.support_provenance, sig.support_coverage],
+    override: sig.manual_override
+      ? [sig.manual_override.state, sig.manual_override.note, sig.manual_override.marked_at]
+      : null,
   };
 }
 
@@ -32,6 +59,7 @@ export function evaluateInputHash(
   sig: CollectedSignals,
   readme: string | null,
   facts?: DeepwikiFacts | null,
+  history?: HistoricalAnalysisReference[] | null,
 ): string {
   // hash 用清洗截断后的 README:超出截断窗口的尾部变动不触发重评
   const prepared = prepareReadme(readme, README_CHARS_TIER2);
@@ -46,6 +74,7 @@ export function evaluateInputHash(
     sig: signalFingerprint(sig),
     readme: prepared ? stableHash(prepared) : null,
     dw: deepwikiFingerprint(facts),
+    history: historicalContextFingerprint(history),
   });
 }
 
@@ -54,12 +83,11 @@ export async function evaluateRepo(
   sig: CollectedSignals,
   readme: string | null,
   categoryTree: CategoryTreeNode[],
-  /** 品类适配统计(来自 v_category_stats),锚定 ecosystem_gap;不参与 input_hash,避免统计微变触发全量重评 */
-  categoryStats?: string | null,
   facts?: DeepwikiFacts | null,
+  history?: HistoricalAnalysisReference[] | null,
 ): Promise<LlmOutput<EvaluateResult>> {
-  const system = systemPrompt(2, categoryTree, { categoryStats });
-  const prompt = buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER2), facts, 2);
+  const system = systemPrompt(2, categoryTree);
+  const prompt = buildUserPrompt(repo, sig, prepareReadme(readme, README_CHARS_TIER2), facts, 2, history);
   const startedAt = new Date();
   const result = await withRetry(
     () =>
@@ -67,7 +95,7 @@ export async function evaluateRepo(
         generateObject({
           model: evaluateModel(),
           schema: evaluateSchema,
-          // qwen3.x 为思考模型,不支持 tool_choice=required;改用 JSON 模式输出结构化结果。
+          // qwen3.8-max 支持 JSON 结构化输出；保留推理能力后再做本地机会门槛过滤。
           mode: 'json',
           system,
           prompt,
@@ -78,9 +106,10 @@ export async function evaluateRepo(
   );
   const usage = result.usage as Record<string, number> | undefined;
   const finishedAt = new Date();
+  const data = normalizeEvaluateResult(result.object, Boolean(facts?.indexed));
   return {
-    data: result.object,
-    input_hash: evaluateInputHash(repo, sig, readme, facts),
+    data,
+    input_hash: evaluateInputHash(repo, sig, readme, facts, history),
     tokens_in: usage?.promptTokens ?? usage?.inputTokens ?? null,
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,
     model: EVALUATE_MODEL_NAME,

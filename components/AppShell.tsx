@@ -16,7 +16,7 @@ import { useIsMobile } from '@/lib/hooks/use-is-mobile';
 import MobileTabBar from '@/components/MobileTabBar';
 
 const ROUTES = [
-  { path: '/', name: '优先级总榜', icon: <DashboardOutlined /> },
+  { path: '/', name: '生态机会榜', icon: <DashboardOutlined /> },
   { path: '/admin', name: '仓库管理', icon: <DatabaseOutlined /> },
   { path: '/categories', name: '分类分布', icon: <AppstoreOutlined /> },
   { path: '/harmony', name: '鸿蒙化率', icon: <PieChartOutlined /> },

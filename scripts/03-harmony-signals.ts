@@ -6,6 +6,7 @@ import { collectHarmonySignals, type HarmonyFileFlags } from '@/lib/harmony/sign
 import { loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 
 interface RepoRow {
   id: number;
@@ -79,6 +80,7 @@ const EMPTY_FLAGS: HarmonyFileFlags = {
 export async function runHarmonySignals(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('harmony-signals');
   try {
+    await assertAnalysisSchema();
     log('加载鸿蒙三方库底表...');
     const registry = await loadRegistry();
     log(`底表条目 ${registry.entries.length} 个`);

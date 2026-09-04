@@ -19,6 +19,7 @@ import { runWeeklyTrending } from '@/scripts/weekly-trending';
 import { runBuildRegistry } from '@/scripts/build-registry';
 import { runDailyAnalysis, writeDailyMetrics } from '@/scripts/daily-analysis';
 import { refreshAnalysisQueue } from '@/lib/pipeline/candidates';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 
 const STAGES: Record<string, (opts: StageOpts) => Promise<void>> = {
   'fetch-top': runFetchTop,
@@ -88,6 +89,7 @@ async function main() {
   };
 
   if (stage === 'all') {
+    await assertAnalysisSchema();
     log(`运行全流程(limit=${opts.limit ?? '全量'})`);
     for (const s of FULL_ORDER) {
       log(`==== 阶段:${s} ====`);

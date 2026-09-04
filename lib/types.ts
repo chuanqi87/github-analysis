@@ -6,6 +6,54 @@
 export const HARMONY_STATES = ['ADAPTED', 'PARTIAL', 'PENDING_ADAPTATION', 'NOT_ADAPTED', 'NOT_APPLICABLE'] as const;
 export type HarmonyState = (typeof HARMONY_STATES)[number];
 
+// 已支持现状是证据事实，与“是否值得继续做鸿蒙生态结合”分开。
+export const SUPPORT_AVAILABILITIES = [
+  'UNKNOWN',
+  'NO_PUBLIC_SUPPORT_FOUND',
+  'BUILD_TARGET_ONLY',
+  'PARTIAL',
+  'USABLE',
+] as const;
+export type SupportAvailability = (typeof SUPPORT_AVAILABILITIES)[number];
+
+export const SUPPORT_PROVENANCES = ['UNKNOWN', 'UPSTREAM', 'OFFICIAL_ECOSYSTEM', 'COMMUNITY'] as const;
+export type SupportProvenance = (typeof SUPPORT_PROVENANCES)[number];
+
+export const SUPPORT_COVERAGES = ['UNKNOWN', 'BUILD_ONLY', 'CORE_ONLY', 'SUBMODULE', 'FULL'] as const;
+export type SupportCoverage = (typeof SUPPORT_COVERAGES)[number];
+
+export const OPPORTUNITY_VERDICTS = [
+  'HIGH_VALUE',
+  'PROMISING',
+  'LOW_VALUE',
+  'NO_CLEAR_OPPORTUNITY',
+  'INSUFFICIENT_EVIDENCE',
+] as const;
+export type OpportunityVerdict = (typeof OPPORTUNITY_VERDICTS)[number];
+
+export const SUPPORT_AVAILABILITY_LABELS: Record<SupportAvailability, string> = {
+  UNKNOWN: '现状未知',
+  NO_PUBLIC_SUPPORT_FOUND: '暂未发现公开支持',
+  BUILD_TARGET_ONLY: '仅构建目标支持',
+  PARTIAL: '存在部分实现',
+  USABLE: '已有可用支持',
+};
+
+export const SUPPORT_PROVENANCE_LABELS: Record<SupportProvenance, string> = {
+  UNKNOWN: '来源未知',
+  UPSTREAM: '上游仓库',
+  OFFICIAL_ECOSYSTEM: '鸿蒙官方生态',
+  COMMUNITY: '社区移植',
+};
+
+export const OPPORTUNITY_VERDICT_LABELS: Record<OpportunityVerdict, string> = {
+  HIGH_VALUE: '高价值机会',
+  PROMISING: '值得验证',
+  LOW_VALUE: '低价值机会',
+  NO_CLEAR_OPPORTUNITY: '未发现明确机会',
+  INSUFFICIENT_EVIDENCE: '证据不足',
+};
+
 // ---- 动态二级分类体系 --------------------------------------------------------
 // 分类现在由 categories 表管理(见 0004_categories.sql)。
 // 以下常量仅用于向后兼容(迁移过渡期),新代码应使用 CategoryRow。
@@ -168,6 +216,11 @@ export interface HarmonySignalsRow {
   source_repo_url: string | null;
   keyword_score: number;
   auto_state_hint: HarmonyState | null;
+  support_availability: SupportAvailability;
+  support_provenance: SupportProvenance;
+  support_coverage: SupportCoverage;
+  support_confidence: number;
+  support_evidence: SupportEvidence[] | null;
   signals: Record<string, unknown> | null;
   checked_at: string;
 }
@@ -182,6 +235,62 @@ export interface AdaptationPoint {
   target_kits?: string[];
   integration_form?: 'ohpm_package' | 'arkui_component' | 'napi_module' | 'platform_backend' | 'sdk_plugin' | 'app_feature' | 'docs_tooling';
   evidence?: string;
+  /** 当前支持尚未覆盖的具体范围。 */
+  uncovered_scope?: string;
+  implementation_outline?: string;
+  ecosystem_need?: number;
+  project_advantage?: number;
+  user_reach?: number;
+  upstream_fit?: number;
+  confidence?: number;
+  evidence_refs?: string[];
+  validation_questions?: string[];
+}
+
+/** 深度分析的技术尽调正文。数值分数仅是这份分析的摘要，不替代这些可审阅结论。 */
+export interface AnalysisDetails {
+  architecture: {
+    core_modules: string[];
+    runtime_and_platform_boundary: string;
+    extension_points: string[];
+    evidence_refs: string[];
+  };
+  porting: {
+    reusable_core: string[];
+    required_changes: string[];
+    blocking_dependencies: string[];
+    build_and_test_strategy: string;
+  };
+  ecosystem: {
+    target_users_and_scenarios: string[];
+    existing_alternatives: string[];
+    differentiated_value: string;
+    adoption_and_maintenance_path: string;
+  };
+  decision: {
+    recommendation: 'INVEST' | 'VALIDATE_FIRST' | 'DEFER' | 'REJECT';
+    why_now: string;
+    prerequisites: string[];
+    kill_criteria: string[];
+  };
+  historical_reuse: Array<{
+    source_repo: string;
+    reused_insight: string;
+    applicability: string;
+    current_repo_evidence: string[];
+  }>;
+  rejected_options: Array<{
+    idea: string;
+    rejection_reason: string;
+    evidence_refs: string[];
+  }>;
+}
+
+export interface SupportEvidence {
+  source: 'ohpm' | 'upstream' | 'gitcode' | 'registry' | 'deepwiki';
+  kind: 'package' | 'project_files' | 'source_code' | 'community_port' | 'build_target' | 'mention';
+  reference: string;
+  strength: 'strong' | 'medium' | 'weak';
 }
 
 export interface AnalysisRow {
@@ -202,7 +311,12 @@ export interface AnalysisRow {
   feasibility: number | null;
   effort_estimate: number | null;
   ecosystem_gap: number | null;
+  harmony_leverage: number | null;
+  opportunity_verdict: OpportunityVerdict | null;
+  opportunity_score: number | null;
+  screening_reason: string | null;
   adaptation_points: AdaptationPoint[] | null;
+  analysis_details: AnalysisDetails | null;
   recommended_approach: string | null;
   reasoning: string | null;
   /** 1-2 句中文:这个项目是干什么的 */
@@ -257,4 +371,9 @@ export interface ScoreBreakdown {
   adaptedGate: number;
   priorityScore: number;
   weightsVersion: string;
+  /** 新模型：最佳可信结合机会本身的得分。 */
+  opportunityScore?: number;
+  /** 热度仅作温和影响力修正，避免高 Star 通用库挤占榜首。 */
+  impactFactor?: number;
+  confidenceFactor?: number;
 }

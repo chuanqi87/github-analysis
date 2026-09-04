@@ -7,6 +7,7 @@ import { classifyRepo, classifyInputHash, type AnalyzeRepo } from '@/lib/llm/cla
 import { resolveAndCreateCategory } from '@/lib/llm/resolve-category';
 import { loadCategoryTree } from '@/lib/category/loader';
 import { startRun, finishRun } from '@/lib/pipeline/runlog';
+import { assertAnalysisSchema } from '@/lib/pipeline/schema-check';
 import { log, pMap, type StageOpts } from '@/scripts/_common';
 import { loadStageRepos, loadSignalsMap, signalsFor, loadDeepwikiMap, deepwikiFor } from '@/scripts/_data';
 import { PROMPT_VERSION } from '@/lib/llm/prompts';
@@ -17,6 +18,7 @@ import {
   flushAnalysisExecutionLogs,
   type AnalysisExecutionRow,
 } from '@/lib/pipeline/analysis-log';
+import { scoreScreening } from '@/lib/scoring/opportunity';
 
 async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
   const client = getAdminClient();
@@ -41,6 +43,7 @@ async function loadExistingHashes(ids: number[]): Promise<Map<number, string>> {
 export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
   const runId = await startRun('llm-classify');
   try {
+    await assertAnalysisSchema();
     const allRepos = await loadStageRepos(opts);
     // 过滤已归档仓库
     const repos = allRepos.filter((r) => !r.is_archived);
@@ -105,6 +108,13 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
           // 解析分类 slug → 数据库 ID,处理新分类提议
           const resolved = await resolveAndCreateCategory(adminClient, categoryTree, out.data);
           if (resolved.created_new) newCategories++;
+          const opportunityScore = scoreScreening({
+            clientRelevance: out.data.client_relevance,
+            platformIntegrationNeed: out.data.platform_integration_need,
+            reusableAssetStrength: out.data.reusable_asset_strength,
+            feasibility: out.data.feasibility,
+            confidence: out.data.confidence,
+          });
 
           rows.push({
             repository_id: repo.id,
@@ -119,10 +129,13 @@ export async function runLlmClassify(opts: StageOpts = {}): Promise<void> {
             category: resolved.category_enum,
             subcategory: out.data.subcategory || '',
             project_summary_cn: out.data.project_summary_cn,
-            harmony_suggestion: out.data.harmony_suggestion,
-            mobile_relevance: out.data.mobile_relevance,
+            harmony_suggestion: null,
+            mobile_relevance: out.data.client_relevance,
             feasibility: out.data.feasibility,
-            harmony_adapted_repo_url: out.data.harmony_adapted_repo_url,
+            harmony_leverage: out.data.platform_integration_need,
+            opportunity_verdict: out.data.opportunity_verdict,
+            opportunity_score: opportunityScore,
+            screening_reason: out.data.screening_reason,
             confidence: out.data.confidence,
             tokens_in: out.tokens_in,
             tokens_out: out.tokens_out,

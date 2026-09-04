@@ -8,7 +8,13 @@ import {
   type HarmonyScope,
   type ProjectType,
 } from '@/lib/deepwiki';
-import type { HarmonyState } from '@/lib/types';
+import type {
+  HarmonyState,
+  SupportAvailability,
+  SupportCoverage,
+  SupportEvidence,
+  SupportProvenance,
+} from '@/lib/types';
 import type { StageOpts } from '@/scripts/_common';
 
 export interface StageRepo {
@@ -66,6 +72,11 @@ interface SignalRow {
   gitcode_repo_url: string | null;
   gitcode_repo_name: string | null;
   deepwiki_scope: string | null;
+  support_availability: SupportAvailability | null;
+  support_provenance: SupportProvenance | null;
+  support_coverage: SupportCoverage | null;
+  support_confidence: number | null;
+  support_evidence: SupportEvidence[] | null;
 }
 
 export async function loadSignalsMap(ids: number[]): Promise<Map<number, CollectedSignals>> {
@@ -76,7 +87,7 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
     const { data, error } = await client
       .from('harmony_signals')
       .select(
-        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint, gitcode_matched, gitcode_repo_url, gitcode_repo_name, deepwiki_scope',
+        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint, gitcode_matched, gitcode_repo_url, gitcode_repo_name, deepwiki_scope, support_availability, support_provenance, support_coverage, support_confidence, support_evidence',
       )
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 harmony_signals 失败:${error.message}`);
@@ -95,6 +106,11 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
         source_repo_url: r.source_repo_url,
         keyword_score: r.keyword_score,
         auto_state_hint: r.auto_state_hint ?? 'NOT_ADAPTED',
+        support_availability: r.support_availability ?? 'UNKNOWN',
+        support_provenance: r.support_provenance ?? 'UNKNOWN',
+        support_coverage: r.support_coverage ?? 'UNKNOWN',
+        support_confidence: r.support_confidence ?? 0.25,
+        support_evidence: r.support_evidence ?? [],
         signals: {},
         gitcode_matched: r.gitcode_matched ?? false,
         gitcode_repo_url: r.gitcode_repo_url ?? null,
@@ -103,6 +119,26 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
           r.deepwiki_scope && (HARMONY_SCOPES as readonly string[]).includes(r.deepwiki_scope)
             ? (r.deepwiki_scope as HarmonyScope)
             : null,
+      });
+    }
+  }
+  for (let i = 0; i < ids.length; i += 800) {
+    const chunk = ids.slice(i, i + 800);
+    const { data, error } = await client
+      .from('harmony_overrides')
+      .select('repository_id,state,note,marked_at')
+      .in('repository_id', chunk);
+    if (error) throw new Error(`加载人工鸿蒙状态失败:${error.message}`);
+    for (const row of (data ?? []) as Array<{
+      repository_id: number;
+      state: HarmonyState;
+      note: string | null;
+      marked_at: string;
+    }>) {
+      const current = map.get(row.repository_id) ?? { ...EMPTY_SIGNALS };
+      map.set(row.repository_id, {
+        ...current,
+        manual_override: { state: row.state, note: row.note, marked_at: row.marked_at },
       });
     }
   }
@@ -123,11 +159,17 @@ const EMPTY_SIGNALS: CollectedSignals = {
   source_repo_url: null,
   keyword_score: 0,
   auto_state_hint: 'NOT_ADAPTED',
+  support_availability: 'UNKNOWN',
+  support_provenance: 'UNKNOWN',
+  support_coverage: 'UNKNOWN',
+  support_confidence: 0.25,
+  support_evidence: [],
   signals: {},
   gitcode_matched: false,
   gitcode_repo_url: null,
   gitcode_repo_name: null,
   deepwiki_scope: null,
+  manual_override: null,
 };
 
 export function signalsFor(map: Map<number, CollectedSignals>, id: number): CollectedSignals {

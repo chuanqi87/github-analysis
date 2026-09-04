@@ -33,7 +33,7 @@ export default function CategoriesPage() {
 
   return (
     <Spin spinning={loading}>
-      <Card title="各分类项目数量与平均适配优先级" style={{ marginBottom: 16 }}>
+      <Card title="各分类项目数量与平均生态机会优先级" style={{ marginBottom: 16 }}>
         <div style={{ width: '100%', height: isMobile ? Math.max(280, chartData.length * 28) : 360 }}>
           <ResponsiveContainer>
             <BarChart
