@@ -287,7 +287,7 @@ export interface AnalysisDetails {
 }
 
 export interface SupportEvidence {
-  source: 'ohpm' | 'upstream' | 'gitcode' | 'registry' | 'deepwiki';
+  source: 'ohpm' | 'upstream' | 'gitcode' | 'gitee' | 'registry' | 'deepwiki';
   kind: 'package' | 'project_files' | 'source_code' | 'community_port' | 'build_target' | 'mention';
   reference: string;
   strength: 'strong' | 'medium' | 'weak';

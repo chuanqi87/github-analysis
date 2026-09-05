@@ -10,19 +10,20 @@
 // p10: 支持现状改由信号层确定性推导；LLM 只做能力画像与结合机会分析。
 // p11: 深评升级为技术尽调，注入同组织/相似项目历史分析作为待复核先验；扩大 README
 //      与代码事实上下文，允许模型基于新证据补充机会，并输出否决项和投资决策条件。
+// p12: 生态移植仓扩展到 Gitee/OpenHarmony-SIG；历史分析只传可复用模式，并对当前证据建立命名空间。
 // project_summary_cn: 新增中文简介字段,不 bump 版本,以免触发全量 LLM 重跑;
 //     新分析或 --force 会产出该字段,前端对旧数据用分类/评估理由兜底。
 import type { CollectedSignals } from '@/lib/harmony/signals';
 import type { CategoryTreeNode } from '@/lib/types';
 import type { DeepwikiFacts } from '@/lib/deepwiki';
-import { isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
+import { isTrustedHarmonyPortOrg } from '@/lib/harmony/ports';
 import { formatCategoryList } from '@/lib/category/loader';
 import {
   formatHistoricalAnalysisContext,
   type HistoricalAnalysisReference,
 } from '@/lib/llm/history-context';
 
-export const PROMPT_VERSION = 'p11';
+export const PROMPT_VERSION = 'p12';
 
 /** tier-1 只看 README 头部;tier-2 看更长片段。 */
 export const README_CHARS_TIER1 = 2000;
@@ -144,10 +145,11 @@ const TIER2_OUTPUT_RULES = `
   ③应以 ohpm 包、ArkUI 组件、Node-API 模块、平台后端、SDK 插件、应用能力或文档工具中的哪种形态交付(integration_form)
   ④需要对接哪些 HarmonyOS Kit/API(target_kits)。没有材料支撑时明确写“需验证”,不要猜具体 API 名。
   ⑤当前支持还没有覆盖什么(uncovered_scope)
-  ⑥用 evidence_refs 引用给定材料中的真实路径、原文或 URL。
+  ⑥用 evidence_refs **逐字复制**“当前仓库事实”或“已支持现状”中出现的真实路径、原文或 URL。
   description 和 implementation_outline 写实际交付动作。
   **有 DeepWiki 代码事实时优先引用其中的真实文件路径**(如"在 src/os_unix.c 同级新增 os_ohos.c"),
-  这比引 README 原文更有说服力;但**只能引材料里出现过的路径,不得自行拼造**
+  这比引 README 原文更有说服力;但**只能引材料里出现过的路径,不得自行拼造**。历史分析段落中的内容属于
+  source_repo 的独立证据命名空间，严禁出现在当前仓库的 evidence_refs/current_repo_evidence 中。
 - 禁止把“翻译文档、增加示例、适配鸿蒙”这种任何项目都成立的动作当作结合机会；除非项目本身就是文档/教学/工具链。
 - **先提出候选、再反证、最后保留**：平台无关代码已经可直接用、鸿蒙已有等价能力、没有项目特定资产、只有构建目标命中、
   或无法说明未覆盖范围时，移入 analysis_details.rejected_options，并写清否决原因。不要把被否决方案包装成低分机会。
@@ -264,13 +266,20 @@ function signalFacts(sig: CollectedSignals): string {
   );
 
   if (sig.gitcode_matched && sig.gitcode_repo_url) {
+    const platform = sig.ecosystem_port_source === 'gitee' ? 'Gitee' : 'GitCode';
     lines.push(
-      isTrustedGitcodeOrg(sig.gitcode_repo_url)
-        ? `- [强] GitCode 官方组织适配仓:${sig.gitcode_repo_url}(${sig.gitcode_repo_name})`
-        : `- [弱] GitCode 搜索命中疑似适配仓:${sig.gitcode_repo_url}(${sig.gitcode_repo_name})。非官方组织,可能是镜像/无关仓/个人试验,需结合其名称与本项目的相关性甄别`,
+      isTrustedHarmonyPortOrg(sig.gitcode_repo_url)
+        ? `- [强] ${platform} 鸿蒙生态官方组织移植仓:${sig.gitcode_repo_url}(${sig.gitcode_repo_name})。这是独立生态仓的支持证据，不等同于上游仓内置支持，也不代表功能完整`
+        : `- [弱] ${platform} 搜索命中疑似移植仓:${sig.gitcode_repo_url}(${sig.gitcode_repo_name})。非官方组织,可能是镜像/无关仓/个人试验,需核验与本项目的来源关系`,
     );
+    if (sig.ecosystem_port_capabilities.length) {
+      lines.push(
+        `- [强] 已核验的现有移植能力:${sig.ecosystem_port_capabilities.join('；')}`,
+        '- 机会去重约束:上述能力已经存在，除非当前材料明确证明具体版本/API/组件缺口，否则不得再次建议建设同名能力',
+      );
+    }
   } else {
-    lines.push('- GitCode 搜索:未发现疑似适配仓');
+    lines.push('- 鸿蒙生态移植仓搜索:未发现疑似适配仓（当前自动搜索不代表穷尽所有代码托管平台）');
   }
 
   lines.push(`- [弱] 鸿蒙关键词得分(0-1):${sig.keyword_score.toFixed(2)}`);
@@ -409,7 +418,8 @@ export function buildUserPrompt(
       '',
       '## 相关项目历史分析（可复用先验，不是当前仓库证据）',
       `以下内容来自同组织或技术栈相似项目。可复用架构模式、依赖经验、鸿蒙生态判断与实施教训，
-但不得把来源仓库的路径、支持状态或结论直接当成当前仓库事实。每条复用结论都必须在当前材料中重新核验；
+但不得把来源仓库的路径、支持状态或结论直接当成当前仓库事实。历史段落已主动移除来源仓路径和详细实现，
+它只能帮助提出验证问题，不能增加当前结论的 confidence。每条复用结论都必须在当前材料中重新核验；
 无法核验的内容只能写入 validation_questions。若采用历史结论，在 analysis_details.historical_reuse 中说明来源、适用边界和当前仓库证据。`,
       formatHistoricalAnalysisContext(history),
     );

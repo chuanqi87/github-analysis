@@ -1,6 +1,7 @@
 // 阶段间共享的数据加载器(repositories / harmony_signals / deepwiki_analysis)。
 import { getAdminClient } from '@/lib/supabase/admin';
 import type { CollectedSignals } from '@/lib/harmony/signals';
+import { harmonyPortSource } from '@/lib/harmony/ports';
 import {
   HARMONY_SCOPES,
   PROJECT_TYPES,
@@ -77,6 +78,7 @@ interface SignalRow {
   support_coverage: SupportCoverage | null;
   support_confidence: number | null;
   support_evidence: SupportEvidence[] | null;
+  signals: Record<string, unknown> | null;
 }
 
 export async function loadSignalsMap(ids: number[]): Promise<Map<number, CollectedSignals>> {
@@ -87,7 +89,7 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
     const { data, error } = await client
       .from('harmony_signals')
       .select(
-        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint, gitcode_matched, gitcode_repo_url, gitcode_repo_name, deepwiki_scope, support_availability, support_provenance, support_coverage, support_confidence, support_evidence',
+        'repository_id, ohpm_matched, ohpm_packages, has_oh_package, has_build_profile, has_module_json5, has_hvigor, has_entry_dir, has_ets, in_registry, registry_source, source_repo_url, keyword_score, auto_state_hint, gitcode_matched, gitcode_repo_url, gitcode_repo_name, deepwiki_scope, support_availability, support_provenance, support_coverage, support_confidence, support_evidence, signals',
       )
       .in('repository_id', chunk);
     if (error) throw new Error(`加载 harmony_signals 失败:${error.message}`);
@@ -111,10 +113,17 @@ export async function loadSignalsMap(ids: number[]): Promise<Map<number, Collect
         support_coverage: r.support_coverage ?? 'UNKNOWN',
         support_confidence: r.support_confidence ?? 0.25,
         support_evidence: r.support_evidence ?? [],
-        signals: {},
+        signals: r.signals ?? {},
         gitcode_matched: r.gitcode_matched ?? false,
         gitcode_repo_url: r.gitcode_repo_url ?? null,
         gitcode_repo_name: r.gitcode_repo_name ?? null,
+        ecosystem_port_source: harmonyPortSource(r.gitcode_repo_url),
+        ecosystem_port_capabilities: Array.isArray(r.signals?.ecosystem_port_capabilities)
+          ? r.signals.ecosystem_port_capabilities.filter((item): item is string => typeof item === 'string')
+          : [],
+        ecosystem_port_evidence_urls: Array.isArray(r.signals?.ecosystem_port_evidence_urls)
+          ? r.signals.ecosystem_port_evidence_urls.filter((item): item is string => typeof item === 'string')
+          : [],
         deepwiki_scope:
           r.deepwiki_scope && (HARMONY_SCOPES as readonly string[]).includes(r.deepwiki_scope)
             ? (r.deepwiki_scope as HarmonyScope)
@@ -168,6 +177,9 @@ const EMPTY_SIGNALS: CollectedSignals = {
   gitcode_matched: false,
   gitcode_repo_url: null,
   gitcode_repo_name: null,
+  ecosystem_port_source: 'unknown',
+  ecosystem_port_capabilities: [],
+  ecosystem_port_evidence_urls: [],
   deepwiki_scope: null,
   manual_override: null,
 };

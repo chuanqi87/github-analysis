@@ -119,34 +119,3 @@ export async function searchGitCode(repoName: string): Promise<GitCodeResult> {
   
   return { matched: false, repo_url: null, repo_name: null, description: null };
 }
-
-/** 已知的鸿蒙适配仓库映射表(人工维护的高置信度数据) */
-export const KNOWN_HARMONY_ADAPTATIONS: Record<string, { url: string; name: string }> = {
-  'flutter/flutter': { url: 'https://gitcode.com/openharmony-sig/flutter_flutter', name: 'openharmony-sig/flutter_flutter' },
-  'facebook/react-native': { url: 'https://gitcode.com/openharmony-sig/react-native', name: 'openharmony-sig/react-native' },
-  'vuejs/vue': { url: 'https://gitcode.com/openharmony-sig/vue', name: 'openharmony-sig/vue' },
-  'tensorflow/tensorflow': { url: 'https://gitcode.com/openharmony-sig/tensorflow', name: 'openharmony-sig/tensorflow' },
-  'pytorch/pytorch': { url: 'https://gitcode.com/openharmony-sig/pytorch', name: 'openharmony-sig/pytorch' },
-  'opencv/opencv': { url: 'https://gitcode.com/openharmony-sig/opencv', name: 'openharmony-sig/opencv' },
-  'grpc/grpc': { url: 'https://gitcode.com/openharmony-sig/grpc', name: 'openharmony-sig/grpc' },
-  'protocolbuffers/protobuf': { url: 'https://gitcode.com/openharmony-sig/protobuf', name: 'openharmony-sig/protobuf' },
-  'nlohmann/json': { url: 'https://gitcode.com/openharmony-sig/json', name: 'openharmony-sig/json' },
-  'fmtlib/fmt': { url: 'https://gitcode.com/openharmony-sig/fmt', name: 'openharmony-sig/fmt' },
-  'catchorg/Catch2': { url: 'https://gitcode.com/openharmony-sig/Catch2', name: 'openharmony-sig/Catch2' },
-  'boostorg/boost': { url: 'https://gitcode.com/openharmony-sig/boost', name: 'openharmony-sig/boost' },
-  'openssl/openssl': { url: 'https://gitcode.com/openharmony-sig/openssl', name: 'openharmony-sig/openssl' },
-  'curl/curl': { url: 'https://gitcode.com/openharmony-sig/curl', name: 'openharmony-sig/curl' },
-  'sqlite/sqlite': { url: 'https://gitcode.com/openharmony-sig/sqlite', name: 'openharmony-sig/sqlite' },
-};
-
-/** 带已知映射的搜索:先查已知表,再搜索 */
-export async function searchGitCodeWithKnown(fullName: string, repoName: string): Promise<GitCodeResult> {
-  // 先查已知映射
-  const known = KNOWN_HARMONY_ADAPTATIONS[fullName];
-  if (known) {
-    return { matched: true, repo_url: known.url, repo_name: known.name, description: '已知鸿蒙适配仓库(人工维护)' };
-  }
-  
-  // 再搜索
-  return searchGitCode(repoName);
-}

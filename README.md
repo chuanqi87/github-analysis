@@ -28,7 +28,7 @@ baseline + 4-source trending  ──▶  analysis_queue 候选池      ◀──
 4. 记下 Project URL、anon key(Settings → API)、service_role key(仅用于 Actions)。
 
 ### 2. 百炼 API Key
-在 [百炼控制台](https://bailian.console.aliyun.com) 获取 API Key(`DASHSCOPE_API_KEY`)。CI 与本地默认模型均为 `qwen3.8-max`，并保留其推理能力；可用 `DASHSCOPE_MODEL` / `DASHSCOPE_MODEL_DEEP` 分别覆盖。CI 默认 `DASHSCOPE_REASONING_EFFORT=xhigh` 保障深析质量，也可通过同名 Actions Variable 调低；本地留空时使用模型默认值。
+在 [百炼控制台](https://bailian.console.aliyun.com) 获取 API Key(`DASHSCOPE_API_KEY`)。CI 与本地默认模型均为 `qwen3.8-max`，并保留其推理能力；可用 `DASHSCOPE_MODEL` / `DASHSCOPE_MODEL_DEEP` 分别覆盖。推理强度按层配置：tier-1/tier-2 默认 `medium`，tier-3 默认 `xhigh`；单次请求分别限制为 5/10/25 分钟，超时会留下失败审计并继续后续候选，避免一个请求耗尽整个 CI job。
 
 ### 3. GitHub PAT(可选,提升抓取配额)
 细粒度或经典 PAT(只读 public 即可)。不配则用 Actions 默认 token。
@@ -45,6 +45,9 @@ baseline + 4-source trending  ──▶  analysis_queue 候选池      ◀──
 | `SUPABASE_SERVICE_ROLE_KEY` | 管道写库(绕过 RLS) | Secret(analyze) + .env |
 | `DASHSCOPE_API_KEY` | 百炼 LLM | Secret(analyze) + .env |
 | `DASHSCOPE_MODEL` / `DASHSCOPE_MODEL_DEEP` | 模型名 | Variable(可选) |
+| `DASHSCOPE_REASONING_EFFORT_CLASSIFY/EVALUATE/DEEP` | 分层推理强度 | Variable(可选) |
+| `DASHSCOPE_TIMEOUT_MS_CLASSIFY/EVALUATE/DEEP` | 分层单请求超时(ms) | Variable(可选) |
+| `DEEP_ANALYSIS_RUNNER` | 长时 job 的 Runner 标签，如 `aliyun-deep-analysis` | Variable(可选) |
 | `GITHUB_TOKEN` / `GH_PAT` | 抓取配额 | Secret(可选) |
 | `NEXT_PUBLIC_ADMIN_EMAIL` | 管理台邮箱校验 | Variable(deploy) + .env |
 | `NEXT_PUBLIC_DEEPWIKI_BASE` | DeepWiki 站点地址(可选,默认 https://deepwiki.com) | Variable(deploy) + .env |
@@ -98,6 +101,8 @@ pnpm audit:session <session_id>                   # 复盘逐项目 Prompt/输�
 2. 配置仓库 Secrets:`NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`DASHSCOPE_API_KEY`(及可选 `GH_PAT`);Variables:`NEXT_PUBLIC_ADMIN_EMAIL`(及可选模型名)。
 3. `deploy-pages` 在 push 时构建部署；`analyze-full.yml` 实际执行每日分层分析，`analyze-daily.yml` 每周校准热点、归档状态和全局评分。
 4. 每日 workflow 会顺带给 Supabase 免费项目保活(避免 7 天闲置暂停)。
+
+长时 tier-2/tier-3 可路由到阿里云自托管 Runner，部署与安全边界见 [docs/aliyun-actions-runner.md](docs/aliyun-actions-runner.md)。仓库未设置 `DEEP_ANALYSIS_RUNNER` 时仍使用 `ubuntu-latest`。
 
 ## 适配价值评分模型
 

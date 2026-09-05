@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectHistoricalReferences, type HistoricalAnalysisReference } from '@/lib/llm/history-context';
+import {
+  formatHistoricalAnalysisContext,
+  selectHistoricalReferences,
+  type HistoricalAnalysisReference,
+} from '@/lib/llm/history-context';
 
 function reference(overrides: Partial<HistoricalAnalysisReference>): HistoricalAnalysisReference {
   return {
@@ -48,4 +52,25 @@ test('只有相同语言但主题无交集的项目不会污染历史先验', ()
     reference({ repository_id: 4, full_name: 'other/unrelated', owner: 'other', topics: ['database'] }),
   ]);
   assert.equal(selected.length, 0);
+});
+
+test('历史上下文不向当前仓库泄露来源仓路径和长推理', () => {
+  const formatted = formatHistoricalAnalysisContext([
+    reference({
+      opportunities: [{
+        area: '平台后端',
+        description: '修改来源仓实现',
+        difficulty: 'high',
+        harmony_value: '复用跨端模式',
+        project_assets: 'scripts/cxx-api/config.yml',
+        evidence_refs: ['scripts/cxx-api/config.yml'],
+        target_devices: ['手机'],
+        integration_form: 'platform_backend',
+      }],
+      reasoning_excerpt: '来源仓长推理 scripts/cxx-api/config.yml',
+    }),
+  ]);
+  assert.match(formatted, /reusable_patterns_only/);
+  assert.doesNotMatch(formatted, /scripts\/cxx-api\/config\.yml/);
+  assert.doesNotMatch(formatted, /来源仓长推理/);
 });

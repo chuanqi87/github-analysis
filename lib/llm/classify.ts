@@ -1,6 +1,6 @@
 // tier-1 粗分类:全量项目,便宜模型,短输出。
 import { generateObject } from 'ai';
-import { classifyModel, CLASSIFY_MODEL_NAME } from '@/lib/llm/provider';
+import { classifyModel, CLASSIFY_MODEL_NAME, requestTimeoutMsFor } from '@/lib/llm/provider';
 import { classifySchema, type ClassifyResult } from '@/lib/llm/schema';
 import {
   systemPrompt,
@@ -44,6 +44,7 @@ function signalFingerprint(sig: CollectedSignals) {
     reg: sig.in_registry,
     kw: Math.round(sig.keyword_score * 4),
     support: [sig.support_availability, sig.support_provenance, sig.support_coverage],
+    port: [sig.gitcode_repo_url, ...sig.ecosystem_port_capabilities],
     override: sig.manual_override
       ? [sig.manual_override.state, sig.manual_override.note, sig.manual_override.marked_at]
       : null,
@@ -91,10 +92,11 @@ export async function classifyRepo(
           mode: 'json',
           system,
           prompt,
-          maxRetries: 1,
+          maxRetries: 0,
+          abortSignal: AbortSignal.timeout(requestTimeoutMsFor('classify')),
         }),
       ),
-    { retries: 2, label: `classify ${repo.full_name}` },
+    { retries: 1, label: `classify ${repo.full_name}` },
   );
   const usage = result.usage as Record<string, number> | undefined;
   const finishedAt = new Date();

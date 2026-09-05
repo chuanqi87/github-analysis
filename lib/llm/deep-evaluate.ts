@@ -7,7 +7,7 @@
 //
 // 分工不变:DeepWiki 出事实,这里的 LLM 出判断。
 import { generateObject } from 'ai';
-import { evaluateModel, EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
+import { deepEvaluateModel, EVALUATE_MODEL_NAME, requestTimeoutMsFor } from '@/lib/llm/provider';
 import { evaluateSchema, type EvaluateResult } from '@/lib/llm/schema';
 import {
   systemPrompt,
@@ -27,6 +27,7 @@ import {
   historicalContextFingerprint,
   type HistoricalAnalysisReference,
 } from '@/lib/llm/history-context';
+import { buildCurrentEvidenceCorpus, sanitizeEvaluateEvidence } from '@/lib/llm/evidence';
 
 /** tier-3 独立的 prompt 版本标识,便于与 tier-2 结果并存对比。 */
 export const DEEP_PROMPT_VERSION = `${PROMPT_VERSION}-deep-${QUESTION_VERSION}`;
@@ -83,6 +84,13 @@ export function deepEvaluateInputHash(
     full: repo.full_name,
     desc: repo.description,
     topics: [...repo.topics].sort(),
+    support: {
+      state: [sig.support_availability, sig.support_provenance, sig.support_coverage],
+      port: [sig.gitcode_repo_url, ...sig.ecosystem_port_capabilities],
+      override: sig.manual_override
+        ? [sig.manual_override.state, sig.manual_override.note, sig.manual_override.marked_at]
+        : null,
+    },
     readme: prepared ? stableHash(prepared) : null,
     dw: deepwikiFingerprint(facts),
     // 子系统问答参与哈希,但只取 key 集合与长度量级,不取原文
@@ -125,22 +133,30 @@ export async function deepEvaluateRepo(
     () =>
       llmLimiter.schedule(() =>
         generateObject({
-          model: evaluateModel(),
+          model: deepEvaluateModel(),
           schema: evaluateSchema,
           // qwen3.8-max 先推理审查，再以 JSON 返回通过反证的机会。
           mode: 'json',
           system,
           prompt,
-          maxRetries: 1,
+          maxRetries: 0,
+          abortSignal: AbortSignal.timeout(requestTimeoutMsFor('deep')),
         }),
       ),
-    { retries: 2, label: `deep-evaluate ${repo.full_name}` },
+    { retries: 1, label: `deep-evaluate ${repo.full_name}` },
   );
 
   const usage = result.usage as Record<string, number> | undefined;
   const finishedAt = new Date();
   return {
-    data: normalizeEvaluateResult(result.object, true),
+    data: normalizeEvaluateResult(
+      sanitizeEvaluateEvidence(
+        result.object,
+        buildCurrentEvidenceCorpus(sig, facts, prepareReadme(readme, README_CHARS_TIER2)),
+      ),
+      true,
+      sig,
+    ),
     input_hash: deepEvaluateInputHash(repo, sig, readme, facts, priorEvaluation, history),
     tokens_in: usage?.promptTokens ?? usage?.inputTokens ?? null,
     tokens_out: usage?.completionTokens ?? usage?.outputTokens ?? null,

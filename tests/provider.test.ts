@@ -4,6 +4,7 @@ import {
   CLASSIFY_MODEL_NAME,
   EVALUATE_MODEL_NAME,
   applyDashscopeModelOptions,
+  requestTimeoutMsFor,
 } from '@/lib/llm/provider';
 
 test('默认分类和深评都使用 qwen3.8-max', () => {
@@ -20,4 +21,10 @@ test('qwen3.8-max 保留思考能力并可设置推理强度', () => {
 
 test('旧模型继续关闭思考以保持 JSON 管道兼容', () => {
   assert.equal(applyDashscopeModelOptions({ model: 'qwen-plus' }).enable_thinking, false);
+});
+
+test('每层模型请求有独立超时，不能无限占用 CI job', () => {
+  assert.equal(requestTimeoutMsFor('classify'), 300_000);
+  assert.equal(requestTimeoutMsFor('evaluate'), 600_000);
+  assert.equal(requestTimeoutMsFor('deep'), 1_500_000);
 });

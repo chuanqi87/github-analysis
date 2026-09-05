@@ -1,6 +1,6 @@
 // tier-2 深度评估:候选项目,更强模型 + README,产出 0-3 个可反证的生态结合机会。
 import { generateObject } from 'ai';
-import { evaluateModel, EVALUATE_MODEL_NAME } from '@/lib/llm/provider';
+import { evaluateModel, EVALUATE_MODEL_NAME, requestTimeoutMsFor } from '@/lib/llm/provider';
 import { evaluateSchema, type EvaluateResult } from '@/lib/llm/schema';
 import {
   systemPrompt,
@@ -20,16 +20,46 @@ import {
   historicalContextFingerprint,
   type HistoricalAnalysisReference,
 } from '@/lib/llm/history-context';
+import { buildCurrentEvidenceCorpus, sanitizeEvaluateEvidence } from '@/lib/llm/evidence';
 
 export function normalizeEvaluateResult(
   result: EvaluateResult,
   hasCodeEvidence: boolean,
+  support?: Pick<CollectedSignals, 'support_availability' | 'support_coverage'>,
 ): EvaluateResult {
-  const opportunities = result.opportunities.filter(isConcreteOpportunity);
+  const unknownExistingCoverage =
+    support?.support_availability === 'USABLE' && support.support_coverage === 'UNKNOWN';
+  const opportunities = result.opportunities
+    .filter(isConcreteOpportunity)
+    .map((opportunity) => unknownExistingCoverage
+      ? {
+          ...opportunity,
+          ecosystem_need: Math.min(opportunity.ecosystem_need, 0.6),
+          confidence: Math.min(opportunity.confidence, 0.55),
+          validation_questions: [
+            '先审计现有鸿蒙实现的版本、API/组件覆盖与维护状态，再确认该机会是否仍未覆盖',
+            ...opportunity.validation_questions,
+          ],
+        }
+      : opportunity);
   const opportunityScore = scoreRepositoryOpportunities(opportunities);
+  const details = unknownExistingCoverage && result.analysis_details.decision.recommendation === 'INVEST'
+    ? {
+        ...result.analysis_details,
+        decision: {
+          ...result.analysis_details.decision,
+          recommendation: 'VALIDATE_FIRST' as const,
+          prerequisites: [
+            '完成现有鸿蒙实现的版本、功能覆盖和维护活跃度审计',
+            ...result.analysis_details.decision.prerequisites,
+          ],
+        },
+      }
+    : result.analysis_details;
   return {
     ...result,
     opportunities,
+    analysis_details: details,
     opportunity_verdict: verdictFromOpportunityScore(opportunityScore, hasCodeEvidence),
     recommended_approach: opportunities.length ? result.recommended_approach : null,
     ecosystem_gap: opportunities.length ? Math.max(...opportunities.map((point) => point.ecosystem_need)) : 0,
@@ -48,6 +78,7 @@ function signalFingerprint(sig: CollectedSignals) {
     reg: sig.in_registry,
     kw: Math.round(sig.keyword_score * 4),
     support: [sig.support_availability, sig.support_provenance, sig.support_coverage],
+    port: [sig.gitcode_repo_url, ...sig.ecosystem_port_capabilities],
     override: sig.manual_override
       ? [sig.manual_override.state, sig.manual_override.note, sig.manual_override.marked_at]
       : null,
@@ -99,14 +130,24 @@ export async function evaluateRepo(
           mode: 'json',
           system,
           prompt,
-          maxRetries: 1,
+          maxRetries: 0,
+          abortSignal: AbortSignal.timeout(requestTimeoutMsFor('evaluate')),
         }),
       ),
-    { retries: 2, label: `evaluate ${repo.full_name}` },
+    { retries: 1, label: `evaluate ${repo.full_name}` },
   );
   const usage = result.usage as Record<string, number> | undefined;
   const finishedAt = new Date();
-  const data = normalizeEvaluateResult(result.object, Boolean(facts?.indexed));
+  const evidenceCorpus = buildCurrentEvidenceCorpus(
+    sig,
+    facts,
+    prepareReadme(readme, README_CHARS_TIER2),
+  );
+  const data = normalizeEvaluateResult(
+    sanitizeEvaluateEvidence(result.object, evidenceCorpus),
+    Boolean(facts?.indexed),
+    sig,
+  );
   return {
     data,
     input_hash: evaluateInputHash(repo, sig, readme, facts, history),

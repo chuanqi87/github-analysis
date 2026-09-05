@@ -640,7 +640,9 @@ async def analyze_repo(
             f"tier-2 结论必须通过源码独立复核，也允许依据新代码证据补充漏项。\n"
             f"{current_context_text if current_context else '(无数据库上下文，以源码为准)'}\n\n"
             f"相关项目历史分析如下。这些内容只能作为调查线索；必须用当前仓库源码重新核验，"
-            f"并在 analysis_details.historical_reuse 中记录采用了什么、适用边界是什么。\n"
+            f"且不能提高当前结论置信度。历史段落属于 source_repo 的独立证据命名空间，严禁把其中"
+            f"的路径或实现细节写入当前仓库 evidence_refs/current_repo_evidence。"
+            f"在 analysis_details.historical_reuse 中记录采用了什么、适用边界是什么。\n"
             f"{history_text if historical_context else '(无可用历史分析)'}\n\n"
             f"注意: 在所有工具调用中，source_root 参数使用 `{source_root}`。"
         )

@@ -7,6 +7,8 @@ import {
   verdictFromOpportunityScore,
 } from '@/lib/scoring/opportunity';
 import type { AdaptationPoint } from '@/lib/types';
+import type { EvaluateResult } from '@/lib/llm/schema';
+import { normalizeEvaluateResult } from '@/lib/llm/evaluate';
 
 const BASE_SUPPORT = {
   ohpmMatched: false,
@@ -50,6 +52,18 @@ test('ohpm 可用产物形成高置信度支持事实', () => {
   assert.equal(result.availability, 'USABLE');
   assert.equal(result.provenance, 'OFFICIAL_ECOSYSTEM');
   assert.equal(result.evidence[0]?.reference, '@ohos/example');
+});
+
+test('OpenHarmony-SIG 的 Gitee 移植仓形成官方生态可用证据', () => {
+  const result = deriveSupportAssessment({
+    ...BASE_SUPPORT,
+    gitcodeMatched: true,
+    gitcodeRepoUrl: 'https://gitee.com/openharmony-sig/ohos_react_native',
+  });
+  assert.equal(result.availability, 'USABLE');
+  assert.equal(result.provenance, 'OFFICIAL_ECOSYSTEM');
+  assert.equal(result.coverage, 'UNKNOWN');
+  assert.equal(result.evidence[0]?.source, 'gitee');
 });
 
 function opportunity(overrides: Partial<AdaptationPoint> = {}): AdaptationPoint {
@@ -98,4 +112,28 @@ test('项目按最佳机会排序，不能靠堆砌低价值条目抬分', () =>
   assert.ok(withSecond > one);
   assert.ok(withSecond - one < 3);
   assert.equal(verdictFromOpportunityScore(0, true), 'NO_CLEAR_OPPORTUNITY');
+});
+
+test('已有可用移植仓但覆盖未知时，强制先核验而不是直接投资', () => {
+  const result = {
+    opportunities: [opportunity()],
+    analysis_details: {
+      architecture: { core_modules: [], runtime_and_platform_boundary: '', extension_points: [], evidence_refs: [] },
+      porting: { reusable_core: [], required_changes: [], blocking_dependencies: [], build_and_test_strategy: '' },
+      ecosystem: { target_users_and_scenarios: [], existing_alternatives: [], differentiated_value: '', adoption_and_maintenance_path: '' },
+      decision: { recommendation: 'INVEST', why_now: '', prerequisites: [], kill_criteria: [] },
+      historical_reuse: [],
+      rejected_options: [],
+    },
+    ecosystem_gap: 0.9,
+    harmony_leverage: 0.9,
+    recommended_approach: '实施',
+  } as unknown as EvaluateResult;
+  const normalized = normalizeEvaluateResult(result, true, {
+    support_availability: 'USABLE',
+    support_coverage: 'UNKNOWN',
+  });
+  assert.equal(normalized.analysis_details.decision.recommendation, 'VALIDATE_FIRST');
+  assert.equal(normalized.opportunities[0]?.confidence, 0.55);
+  assert.equal(normalized.opportunities[0]?.ecosystem_need, 0.6);
 });

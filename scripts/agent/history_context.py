@@ -77,7 +77,7 @@ def load_historical_context(owner: str, name: str) -> list[dict[str, Any]]:
         analysis_rows: list[dict[str, Any]] = []
         select = (
             "repository_id,tier,model,prompt_version,project_summary_cn,opportunity_verdict,"
-            "opportunity_score,adaptation_points,recommended_approach,reasoning,analysis_details,analyzed_at,created_at"
+            "opportunity_score,adaptation_points,recommended_approach,analysis_details,analyzed_at,created_at"
         )
         for offset in range(0, len(ids), 100):
             chunk = ",".join(str(repo_id) for repo_id in ids[offset:offset + 100])
@@ -122,6 +122,16 @@ def load_historical_context(owner: str, name: str) -> list[dict[str, Any]]:
         result = []
         for _, repo, analysis in ranked[:MAX_REFERENCES]:
             details = analysis.get("analysis_details") or {}
+            reusable_patterns = []
+            for opportunity in (analysis.get("adaptation_points") or [])[:3]:
+                reusable_patterns.append({
+                    "source_repo": repo["full_name"],
+                    "area": opportunity.get("area"),
+                    "integration_form": opportunity.get("integration_form"),
+                    "harmony_value": opportunity.get("harmony_value"),
+                    "target_devices": opportunity.get("target_devices") or [],
+                    "validation_lessons": opportunity.get("validation_questions") or [],
+                })
             result.append({
                 "source_repo": repo["full_name"],
                 "relation_clues": {
@@ -132,10 +142,12 @@ def load_historical_context(owner: str, name: str) -> list[dict[str, Any]]:
                 "analysis_level": f"tier-{analysis.get('tier')} / {analysis.get('prompt_version')} / {analysis.get('model')}",
                 "summary": analysis.get("project_summary_cn"),
                 "verdict": analysis.get("opportunity_verdict"),
-                "opportunities": (analysis.get("adaptation_points") or [])[:3],
-                "recommended_approach": analysis.get("recommended_approach"),
+                "reusable_patterns_only": reusable_patterns,
+                "source_repo_approach": analysis.get("recommended_approach"),
                 "decision": details.get("decision"),
-                "reasoning_excerpt": (analysis.get("reasoning") or "")[:800],
+                "evidence_namespace": (
+                    f"上述内容全部属于 {repo['full_name']}；其中没有任何路径可作为当前仓库证据"
+                ),
             })
         return result
     except (requests.RequestException, KeyError, TypeError, ValueError):

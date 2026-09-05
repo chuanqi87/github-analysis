@@ -9,7 +9,12 @@ import type {
 import { keywordHits, keywordScore } from '@/lib/harmony/keywords';
 import { findOhpmPackage } from '@/lib/harmony/ohpm';
 import { matchRegistry, type RegistryIndex } from '@/lib/harmony/registry';
-import { searchGitCodeWithKnown, isTrustedGitcodeOrg } from '@/lib/harmony/gitcode';
+import {
+  findHarmonyPort,
+  harmonyPortSource,
+  isTrustedHarmonyPortOrg,
+  type HarmonyPortSource,
+} from '@/lib/harmony/ports';
 import type { DeepwikiFacts, HarmonyScope } from '@/lib/deepwiki';
 
 export interface SignalRepo {
@@ -53,6 +58,10 @@ export interface CollectedSignals {
   gitcode_matched: boolean;
   gitcode_repo_url: string | null;
   gitcode_repo_name: string | null;
+  /** 实际生态移植仓平台；gitcode_* 是历史兼容字段，URL 也可能来自 Gitee。 */
+  ecosystem_port_source: HarmonyPortSource;
+  ecosystem_port_capabilities: string[];
+  ecosystem_port_evidence_urls: string[];
   // DeepWiki 代码级检索出的鸿蒙证据分级(仅 dedicated_port 构成适配证据)
   deepwiki_scope: HarmonyScope | null;
   /** 管理台人工标记是最终权威；分析机会时必须优先扣除其确认的支持范围。 */
@@ -74,6 +83,8 @@ export interface SupportAssessmentInput {
   upstreamPaths?: string[];
   gitcodeMatched: boolean;
   gitcodeRepoUrl: string | null;
+  ecosystemPortCapabilities?: string[];
+  ecosystemPortEvidenceUrls?: string[];
   registryMatched: boolean;
   registrySource: string | null;
   deepwikiScope: HarmonyScope | null;
@@ -96,23 +107,33 @@ export function deriveSupportAssessment(input: SupportAssessmentInput): SupportA
     return {
       availability: 'USABLE',
       provenance: 'OFFICIAL_ECOSYSTEM',
-      coverage: 'CORE_ONLY',
+      // 发包只能证明存在可消费产物，不能证明组件/API/版本覆盖范围。
+      coverage: 'UNKNOWN',
       confidence: 0.95,
       evidence,
     };
   }
 
-  if (input.gitcodeMatched && isTrustedGitcodeOrg(input.gitcodeRepoUrl)) {
+  if (input.gitcodeMatched && isTrustedHarmonyPortOrg(input.gitcodeRepoUrl)) {
     evidence.push({
-      source: 'gitcode',
+      source: harmonyPortSource(input.gitcodeRepoUrl) === 'gitee' ? 'gitee' : 'gitcode',
       kind: 'community_port',
-      reference: input.gitcodeRepoUrl ?? 'GitCode 官方组织仓库',
+      reference: input.gitcodeRepoUrl ?? '鸿蒙生态官方组织移植仓',
       strength: 'strong',
     });
+    for (const reference of input.ecosystemPortEvidenceUrls ?? []) {
+      evidence.push({
+        source: harmonyPortSource(reference) === 'gitee' ? 'gitee' : 'gitcode',
+        kind: 'source_code',
+        reference,
+        strength: 'strong',
+      });
+    }
     return {
       availability: 'USABLE',
       provenance: 'OFFICIAL_ECOSYSTEM',
-      coverage: 'CORE_ONLY',
+      // 发现独立移植仓不能据此猜测覆盖完整度；需进一步审计该仓版本与功能矩阵。
+      coverage: 'UNKNOWN',
       confidence: 0.85,
       evidence,
     };
@@ -149,7 +170,9 @@ export function deriveSupportAssessment(input: SupportAssessmentInput): SupportA
   if (input.registryMatched || input.gitcodeMatched) {
     const reference = input.gitcodeRepoUrl ?? input.registrySource ?? '鸿蒙三方库底表';
     evidence.push({
-      source: input.gitcodeMatched ? 'gitcode' : 'registry',
+      source: input.gitcodeMatched && harmonyPortSource(input.gitcodeRepoUrl) === 'gitee'
+        ? 'gitee'
+        : input.gitcodeMatched ? 'gitcode' : 'registry',
       kind: 'community_port',
       reference,
       strength: input.gitcodeMatched ? 'weak' : 'medium',
@@ -255,14 +278,18 @@ export async function collectHarmonySignals(
   let gitcodeMatched = false;
   let gitcodeRepoUrl: string | null = null;
   let gitcodeRepoName: string | null = null;
+  let ecosystemPortCapabilities: string[] = [];
+  let ecosystemPortEvidenceUrls: string[] = [];
   
   const shouldGitCode = opts.checkGitCode ?? true;
   if (shouldGitCode) {
     try {
-      const gitResult = await searchGitCodeWithKnown(repo.full_name, repo.name);
-      gitcodeMatched = gitResult.matched;
-      gitcodeRepoUrl = gitResult.repo_url;
-      gitcodeRepoName = gitResult.repo_name;
+      const portResult = await findHarmonyPort(repo.full_name, repo.name);
+      gitcodeMatched = portResult.matched;
+      gitcodeRepoUrl = portResult.repo_url;
+      gitcodeRepoName = portResult.repo_name;
+      ecosystemPortCapabilities = portResult.verified_capabilities;
+      ecosystemPortEvidenceUrls = portResult.evidence_urls;
     } catch {
       // GitCode 搜索失败不影响整体流程
     }
@@ -279,7 +306,7 @@ export async function collectHarmonySignals(
     ets: hasEts,
     kw: kwScore,
     gitcode: gitcodeMatched,
-    gitcodeTrusted: isTrustedGitcodeOrg(gitcodeRepoUrl),
+    gitcodeTrusted: isTrustedHarmonyPortOrg(gitcodeRepoUrl),
     deepwikiPort,
   });
   const upstreamPaths = [
@@ -297,6 +324,8 @@ export async function collectHarmonySignals(
     upstreamPaths,
     gitcodeMatched,
     gitcodeRepoUrl,
+    ecosystemPortCapabilities,
+    ecosystemPortEvidenceUrls,
     registryMatched: reg.hit,
     registrySource: reg.hit ? reg.source : null,
     deepwikiScope,
@@ -331,13 +360,19 @@ export async function collectHarmonySignals(
       registry_match: reg,
       probed_ohpm: shouldOhpm,
       gitcode_searched: shouldGitCode,
-      gitcode_org_trusted: gitcodeMatched && isTrustedGitcodeOrg(gitcodeRepoUrl),
+      ecosystem_port_source: harmonyPortSource(gitcodeRepoUrl),
+      ecosystem_port_capabilities: ecosystemPortCapabilities,
+      ecosystem_port_evidence_urls: ecosystemPortEvidenceUrls,
+      ecosystem_port_org_trusted: gitcodeMatched && isTrustedHarmonyPortOrg(gitcodeRepoUrl),
       deepwiki_indexed: facts?.indexed ?? false,
       deepwiki_harmony_paths: facts?.harmony?.harmony_paths ?? [],
     },
     gitcode_matched: gitcodeMatched,
     gitcode_repo_url: gitcodeRepoUrl,
     gitcode_repo_name: gitcodeRepoName,
+    ecosystem_port_source: harmonyPortSource(gitcodeRepoUrl),
+    ecosystem_port_capabilities: ecosystemPortCapabilities,
+    ecosystem_port_evidence_urls: ecosystemPortEvidenceUrls,
     deepwiki_scope: deepwikiScope,
   };
 }

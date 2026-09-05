@@ -40,7 +40,12 @@ export const deepwikiLimiter = new Bottleneck({
 /** 通用重试:指数退避 + 抖动;对 429/5xx/网络错误重试。 */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  opts: { retries?: number; baseMs?: number; label?: string } = {},
+  opts: {
+    retries?: number;
+    baseMs?: number;
+    label?: string;
+    shouldRetry?: (error: unknown) => boolean;
+  } = {},
 ): Promise<T> {
   const retries = opts.retries ?? 4;
   const baseMs = opts.baseMs ?? 500;
@@ -50,8 +55,13 @@ export async function withRetry<T>(
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (attempt === retries) break;
+      if (attempt === retries || opts.shouldRetry?.(err) === false) break;
       const wait = baseMs * 2 ** attempt + Math.floor(sudoRandom(attempt + labelSeed(opts.label)) * baseMs);
+      if (opts.label) {
+        console.warn(
+          `[retry] ${opts.label} 第 ${attempt + 1}/${retries + 1} 次失败，${wait}ms 后重试: ${String(err).slice(0, 240)}`,
+        );
+      }
       await sleep(wait);
     }
   }

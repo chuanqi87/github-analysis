@@ -34,18 +34,22 @@ concurrency:
   group: code-analysis
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   # ── 主路径：DeepWiki 深度问询 ────────────────────────────────────────────
   deepwiki-deep:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: ${{ vars.DEEP_ANALYSIS_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 180
     outputs:
       registered_repos: ${{ steps.register.outputs.registered_repos }}
     env:
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
       DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen3.8-max' }}
-      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT || 'xhigh' }}
+      DASHSCOPE_REASONING_EFFORT_DEEP: ${{ vars.DASHSCOPE_REASONING_EFFORT_DEEP || 'xhigh' }}
+      DASHSCOPE_TIMEOUT_MS_DEEP: ${{ vars.DASHSCOPE_TIMEOUT_MS_DEEP || '1500000' }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
@@ -93,13 +97,13 @@ jobs:
   tarball-fallback:
     needs: deepwiki-deep
     if: ${{ github.event.inputs.skip_fallback != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    runs-on: ${{ vars.DEEP_ANALYSIS_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 360
     env:
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1' }}
       CODE_ANALYSIS_MODEL: ${{ github.event.inputs.model || 'qwen3.8-max' }}
-      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT || 'xhigh' }}
+      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT_DEEP || 'xhigh' }}
       GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

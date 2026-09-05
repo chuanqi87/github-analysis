@@ -31,9 +31,12 @@ concurrency:
   group: analyze
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.DEEP_ANALYSIS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 330
     env:
       GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
@@ -43,7 +46,12 @@ jobs:
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
       DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen3.8-max' }}
       DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen3.8-max' }}
-      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT || 'xhigh' }}
+      DASHSCOPE_REASONING_EFFORT_CLASSIFY: ${{ vars.DASHSCOPE_REASONING_EFFORT_CLASSIFY || 'medium' }}
+      DASHSCOPE_REASONING_EFFORT_EVALUATE: ${{ vars.DASHSCOPE_REASONING_EFFORT_EVALUATE || 'medium' }}
+      DASHSCOPE_REASONING_EFFORT_DEEP: ${{ vars.DASHSCOPE_REASONING_EFFORT_DEEP || 'xhigh' }}
+      DASHSCOPE_TIMEOUT_MS_CLASSIFY: ${{ vars.DASHSCOPE_TIMEOUT_MS_CLASSIFY || '300000' }}
+      DASHSCOPE_TIMEOUT_MS_EVALUATE: ${{ vars.DASHSCOPE_TIMEOUT_MS_EVALUATE || '600000' }}
+      DASHSCOPE_TIMEOUT_MS_DEEP: ${{ vars.DASHSCOPE_TIMEOUT_MS_DEEP || '1500000' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

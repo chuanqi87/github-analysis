@@ -220,10 +220,14 @@ export function historicalContextFingerprint(context?: HistoricalAnalysisReferen
     topics: [...item.topics].sort(),
     summary: item.project_summary_cn,
     verdict: item.opportunity_verdict,
-    opportunities: item.opportunities,
+    opportunities: item.opportunities.map((opportunity) => ({
+      area: opportunity.area,
+      integration_form: opportunity.integration_form,
+      harmony_value: opportunity.harmony_value,
+      target_devices: opportunity.target_devices,
+    })),
     approach: item.recommended_approach,
     decision: item.decision,
-    reasoning: item.reasoning_excerpt,
   })));
 }
 
@@ -236,9 +240,16 @@ export function formatHistoricalAnalysisContext(context?: HistoricalAnalysisRefe
     summary: item.project_summary_cn,
     verdict: item.opportunity_verdict,
     score: item.opportunity_score,
-    opportunities: item.opportunities,
-    recommended_approach: item.recommended_approach,
+    reusable_patterns_only: item.opportunities.map((opportunity) => ({
+      source_repo: item.full_name,
+      area: opportunity.area,
+      integration_form: opportunity.integration_form,
+      harmony_value: opportunity.harmony_value,
+      target_devices: opportunity.target_devices,
+      validation_lessons: opportunity.validation_questions,
+    })),
+    source_repo_approach: item.recommended_approach,
     decision: item.decision,
-    reasoning_excerpt: item.reasoning_excerpt,
+    evidence_namespace: `上述内容全部属于 ${item.full_name}；其中没有任何路径可作为当前仓库证据`,
   }, null, 2)).join('\n\n');
 }

@@ -19,8 +19,11 @@ concurrency:
   group: analyze-single-${{ github.event.inputs.repo_id }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  analyze:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -30,8 +33,8 @@ jobs:
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
       DASHSCOPE_MODEL: ${{ vars.DASHSCOPE_MODEL || 'qwen3.8-max' }}
-      DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen3.8-max' }}
-      DASHSCOPE_REASONING_EFFORT: ${{ vars.DASHSCOPE_REASONING_EFFORT || 'xhigh' }}
+      DASHSCOPE_REASONING_EFFORT_CLASSIFY: ${{ vars.DASHSCOPE_REASONING_EFFORT_CLASSIFY || 'medium' }}
+      DASHSCOPE_TIMEOUT_MS_CLASSIFY: ${{ vars.DASHSCOPE_TIMEOUT_MS_CLASSIFY || '300000' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -67,10 +70,49 @@ jobs:
       - name: 4/7 获取 README
         run: pnpm pipeline --stage=fetch-readme --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
 
-      - name: 5/7 LLM 分类 + 评估
+      - name: 5/7 LLM 初筛
+        run: pnpm pipeline --stage=llm-classify --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+
+  deep-analysis:
+    needs: prepare
+    # 设置仓库变量 DEEP_ANALYSIS_RUNNER=aliyun-deep-analysis 后路由到专用自托管 Runner。
+    runs-on: ${{ vars.DEEP_ANALYSIS_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 180
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ vars.DASHSCOPE_BASE_URL }}
+      DASHSCOPE_MODEL_DEEP: ${{ vars.DASHSCOPE_MODEL_DEEP || 'qwen3.8-max' }}
+      DASHSCOPE_REASONING_EFFORT_EVALUATE: ${{ vars.DASHSCOPE_REASONING_EFFORT_EVALUATE || 'medium' }}
+      DASHSCOPE_REASONING_EFFORT_DEEP: ${{ vars.DASHSCOPE_REASONING_EFFORT_DEEP || 'xhigh' }}
+      DASHSCOPE_TIMEOUT_MS_EVALUATE: ${{ vars.DASHSCOPE_TIMEOUT_MS_EVALUATE || '600000' }}
+      DASHSCOPE_TIMEOUT_MS_DEEP: ${{ vars.DASHSCOPE_TIMEOUT_MS_DEEP || '1500000' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build force flag
+        id: flags
         run: |
-          pnpm pipeline --stage=llm-classify --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
-          pnpm pipeline --stage=llm-evaluate --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "force=--force" >> $GITHUB_OUTPUT
+          else
+            echo "force=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 5/7 LLM 深度评估 (tier-2)
+        run: pnpm pipeline --stage=llm-evaluate --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
 
       - name: 6/7 DeepWiki 深度分析 (tier-3)
         run: pnpm pipeline --stage=deepwiki-deep --ids=${{ github.event.inputs.repo_id }} ${{ steps.flags.outputs.force }}
